@@ -31,6 +31,7 @@ from .update import *
 NodesMaxId = 1   # Maximum node id number. 0 means invalid
 NodesMap   = {}  # node_id -> node
 VTKCache   = {}  # node_id -> vtkobj
+persistent_storage = {"nodes": {}}
 
 
 def node_created(node):

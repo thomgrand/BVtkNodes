@@ -12,3 +12,7 @@ class BVTKException(Exception):
             err_str += "\nNested message: " + str(self.nested_ex)
             
         return err_str
+
+def assert_bvtk(condition, message):
+    if not condition:
+        raise(BVTKException(message))
