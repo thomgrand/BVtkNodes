@@ -2,6 +2,7 @@ from .update import *
 from .core import l # Import logging
 from .core import *
 import bmesh
+import numpy as np
 
 try:
     import pyopenvdb
@@ -128,14 +129,10 @@ def generate_vertex_colors(ob, numpy_mesh, name, ramp, mesh, generate_material):
 
 
 
-def vtkdata_to_blender_v2(data, name, ramp=None, smooth=False, generate_material=False):
-    '''Convert VTK data to Blender mesh object, using optionally
-    given color ramp and normal smoothing. Optionally generates default
-    material, which includes also color information if ramp is given.
-
-    Note: This is the original implementation and does not consider
-    VTK cell types (vertex semantics) in conversion, so it works best
-    with polygon generators like vtkGeometryFilter.
+def vtkdata_to_blender_pynodes(data, name, ramp=None, smooth=False, generate_material=False):
+    '''This function is a helper, called if pynodes are activated. It speeds up the conversion
+    and gives additional functionality for the conversion like vertex colors and attribute
+    conversion.
     '''
     if not data:
         l.error('no data!')
@@ -208,6 +205,14 @@ def vtkdata_to_blender(data, name, ramp=None, smooth=False, generate_material=Fa
     if not data:
         l.error('no data!')
         return
+
+    if with_pyvista:
+        pass #type(data) in pynodes.vtk_pv_mapping.values()
+        #Custom property:
+        #create custom data layers
+        #my_id = bm.verts.layers.float.new('id')
+
+
     if issubclass(data.__class__, vtk.vtkImageData):
         imgdata_to_blender(data, name)
         return
@@ -256,7 +261,28 @@ def vtkdata_to_blender(data, name, ramp=None, smooth=False, generate_material=Fa
 
     # Set colors and color legend
     unwrap_and_color_the_mesh(ob, data, name, ramp, bm, generate_material)
+
     bm.to_mesh(me)  # store bmesh to mesh
+
+    #TODO: Test only. Remove
+    """
+    me.vertex_colors.new(name="my_color")
+    color_data = me.vertex_colors["my_color"].data
+    mean_point = np.mean(data.points, axis=0, keepdims=True)
+    triangs = np.stack([data.cells[i::4] for i in [1, 2, 3]], axis=-1)
+    max_dist = np.max(np.linalg.norm(data.points - mean_point, axis=-1))
+    colors_w_alpha = np.tile(np.linalg.norm(data.points[triangs] - mean_point, axis=-1).reshape([-1]), [4, 1]).T / max_dist #np.tile(np.linspace(0, 1, num=len(color_data)), [4, 1]).T
+    colors_w_alpha[..., -1] = 1. #Alpha-channel
+    color_data.foreach_set('color', colors_w_alpha.reshape([-1]))
+    """
+    #color_layer = bm.loops.layers.color.new("my_color")
+    #my_id = bm.verts.layers.float.new('id')
+    #bm.verts.ensure_lookup_table()
+    #nrs = len(verts)
+    #for vert_i, vert in enumerate(verts):
+    #    bm.verts[vert_i][my_id] = vert_i / nrs
+    #####################
+
     l.info('conversion successful, verts = ' + str(len(verts)))
 
 

@@ -29,8 +29,10 @@ def UpdateObj(node, vtkobj):
         err_msg = ("Encountered an attribute error when trying to apply vtk properties.\n"
                 + "This may point to a VTK version mismatch between generated and currently used VTK.")
         raise BVTKException(err_msg, err)
+    except BVTKException as ex:
+        raise ex
     except Exception as ex:
-        err_msg = "Unknown error..."
+        err_msg = "Internal error"
         raise BVTKException(err_msg, ex)
     
     if hasattr(vtkobj, "Update"):
@@ -178,7 +180,7 @@ class BVTK_OT_FunctionQueue(bpy.types.Operator):
             return {'PASS_THROUGH'}
 
         except BVTKException as bvtk_ex:
-            err_str = "Queue execution (modal) failed with an unexpected error: \n" + str(bvtk_ex)
+            err_str = "Queue execution (modal) failed with an internal error: \n" + str(bvtk_ex)
             l.error(err_str)
             self.report({'ERROR'}, err_str)
             self.cancel(context)

@@ -307,12 +307,6 @@ class VTKTransformFilter(Node, BVTK_Node):
 
 
         vtkobj.SetTransform(self.vtk_transform)
-        return
-        #TODO: This crashes!
-        if self.m_TransformAllInputVectors:
-            vtkobj.TransformAllInputVectorsOn()
-        else:
-            vtkobj.TransformAllInputVectorsOff()
 
 
 add_class(VTKTransformFilter)

@@ -404,6 +404,45 @@ class BVTK_Node_ImageDataObjectSource(Node, BVTK_Node):
         return img
 
 
+# ----------------------------------------------------------------
+# Simplified Transform Filter
+# ----------------------------------------------------------------
+# TODO
+"""
+class BVTK_Node_TransformFilterSimple(Node, BVTK_Node):
+    bl_idname = 'BVTK_Node_TransformFilterSimpleType'
+    bl_label = 'Transform Filter Simple'
+
+    m_Scale: bpy.props.FloatVectorProperty(name='Scale X/Y/Z', default=[1., 1., 1.], size=3)
+    m_Rotation: bpy.props.FloatVectorProperty(name='Rotation X/Y/Z', default=[0., 0., 0.],
+                                              min=0.,
+                                              max=360., size=3)
+    m_Translation: bpy.props.FloatVectorProperty(name='Translation X/Y/Z', default=[0., 0., 0.], size=3)
+
+    b_properties: bpy.props.BoolVectorProperty(name="", size=3, get=BVTK_Node.get_b, set=BVTK_Node.set_b)
+
+    def m_properties(self):
+        return ['m_Scale', 'm_Rotation', 'm_Translation']
+
+    def m_connections(self):
+        return (['input'], ['output'], [], [])
+
+    def get_vtkobj(self):
+        return vtk.vtkTransformFilter()
+
+    @run_custom_code
+    def apply_properties(self, vtkobj):
+        self.vtk_transform = vtk.vtkTransform()
+        self.vtk_transform.Scale(*self.m_Scale)
+        self.vtk_transform.RotateX(self.m_Rotation[0])
+        self.vtk_transform.RotateY(self.m_Rotation[1])
+        self.vtk_transform.RotateZ(self.m_Rotation[2])
+        self.vtk_transform.Translate(*self.m_Translation)
+
+
+        vtkobj.SetTransform(self.vtk_transform)
+        return 
+"""
 
 # Add classes and menu items
 TYPENAMES = []
@@ -416,6 +455,8 @@ add_class(BVTK_Node_TimeSelector)
 TYPENAMES.append('BVTK_Node_TimeSelectorType')
 add_class(BVTK_Node_ImageDataObjectSource)
 TYPENAMES.append('BVTK_Node_ImageDataObjectSourceType')
+#add_class(BVTK_Node_TransformFilterSimple)
+#TYPENAMES.append('BVTK_Node_TransformFilterSimpleType')
 
 menu_items = [NodeItem(x) for x in TYPENAMES]
 CATEGORIES.append(BVTK_NodeCategory("Custom", "Custom", items=menu_items))

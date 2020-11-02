@@ -8,13 +8,14 @@ import pyvista as pv
 from ...errors.bvtk_errors import BVTKException, assert_bvtk
 
 
+
 class ArbitraryInputsHelper():
     '''Helps in organizing nodes with an arbitrary number of input nodes that will
     occur and disappear according to the connections made. See Pyvista-Calculator Node
     for an example
     '''
     input_limit = 10
-    input_format_str = "Input {}"
+    input_format_str = "inputs[{}]"
 
     @property
     def current_inputs(self):
@@ -115,6 +116,21 @@ vtk_pv_mapping = (
         'vtkRectilinearGrid': pv.RectilinearGrid,
         'vtkStructuredGrid': pv.StructuredGrid
     })
+
+def map_vtk_to_pv_obj(vtkobj):
+    if not is_mappable_pyvista_type(vtkobj):
+        return None
+    else:
+        return vtk_pv_mapping[vtkobj.__class__.__name__]
+
+def is_mappable_pyvista_type(vtkobj):
+    class_name = vtkobj.__class__.__name__
+    return class_name in vtk_pv_mapping
+
+def is_pyvista_obj(vtkobj):
+    vtk_pv_mask, vtk_types, pv_types = zip(*[(isinstance(vtkobj, pv_type), vtk, pv_type) for vtk_type, pv_type in vtk_pv_mapping.items()])
+    vtk_pv_mask = np.array(vtk_pv_mask)
+    return np.any(vtk_pv_mask), vtk_types[np.where(vtk_pv_mask)], pv_types[np.where(vtk_pv_mask)]
 
 def create_pyvista_wrapper(vtkobj):
     if isinstance(vtkobj, vtk.vtkAlgorithmOutput):
@@ -225,6 +241,20 @@ class BVTK_Node_PyvistaCalculator(ArbitraryInputsHelper, Node, BVTK_Node):
     #    row = layout.row()
     #    row.label(text = self.info_msg)
 
+    def create_input_dicts(self, pvobjs):
+        input_dicts = []
+        for pvobj, input_i in zip(pvobjs, range(self.current_active_inputs)):
+            single_input_dict = pvobj
+            for data_arr_name in ["point", "cell", "field"]:
+                array_name = data_arr_name + "_arrays"
+                key_name = data_arr_name.capitalize() + "Data"
+                data_dict = {k: v for k, v in getattr(pvobj, array_name).items()}
+                setattr(single_input_dict, key_name, data_dict)
+
+            input_dicts.append(single_input_dict)
+
+        return input_dicts
+
     def apply_properties(self, vtkobj):
         print("Apply properties called with " + str(vtkobj))
         assert_bvtk(type(vtkobj) in vtk_pv_mapping.values(), "Expected a pyvista type. This is an internal error... try updating")
@@ -234,49 +264,39 @@ class BVTK_Node_PyvistaCalculator(ArbitraryInputsHelper, Node, BVTK_Node):
 
         lambda_eval_str = "lambda: " + self.m_LambdaCode
 
-        #Only one input: Unpack dictionary
+        local_dict = {"inputs": self.create_input_dicts(pvobjs)}
+        local_dict["numpy"] = np
+        local_dict["np"] = np
+
+        #Only one input: We can unpack the chosen dictionary
         if len(data_dicts) == 1:
-            local_dict = {k: v for k, v in data_dicts[0].items()}
-            local_dict["numpy"] = np
-            local_dict["np"] = np
-            try:
-                result = eval(lambda_eval_str, local_dict)()
-            except Exception as ex:
-                err_msg = "Execution of the given calculator function failed with: {}".format(ex)
-                l.error(err_msg)
-                self.m_InfoMsg = err_msg
-                return self.get_input_node('input')[1]
-    
-            if self.e_AttrType == 'PointData':
-                target_dict = vtkobj.point_arrays
-                expected_size = vtkobj.n_points
-            elif self.e_AttrType == 'CellData':
-                target_dict = vtkobj.cell_arrays
-                expected_size = vtkobj.n_cells
-            else:
-                target_dict = vtkobj.field_arrays
-                expected_size = None
+            local_dict = {**local_dict, **{k: v for k, v in data_dicts[0].items()}}
 
-            assert_bvtk(isinstance(result, np.ndarray) and (expected_size is None or result.shape[0] == expected_size), 
-                            "Expected a [%d (, x)] array as a result of the lambda expression. Got %s" % (expected_size, result))
-            target_dict[self.m_ResultName] = result #Change the mutable dictionary in-place
-            persistent_storage["nodes"][self.name] = vtkobj
+        try:
+            result = eval(lambda_eval_str, local_dict)()
+        except Exception as ex:
+            err_msg = "Execution of the given calculator function failed with: {}".format(ex)
+            l.error(err_msg)
+            raise BVTKException(err_msg, ex)
 
+
+        if self.e_AttrType == 'PointData':
+            target_dict = vtkobj.point_arrays
+            expected_size = vtkobj.n_points
+        elif self.e_AttrType == 'CellData':
+            target_dict = vtkobj.cell_arrays
+            expected_size = vtkobj.n_cells
         else:
-            assert(False) #self.create_lambda_locals(data_dicts)
+            target_dict = vtkobj.field_arrays
+            expected_size = None
+
+        #TODO: Is this properly caught?
+        assert_bvtk(isinstance(result, np.ndarray) and (expected_size is None or result.shape[0] == expected_size), 
+                        "Expected a [%d (, x)] array as a result of the lambda expression. Got %s" % (expected_size, result))
+        target_dict[self.m_ResultName] = result #Change the mutable dictionary in-place
+        persistent_storage["nodes"][self.name] = vtkobj
 
         pass
-    
-    """
-    def update(self):
-        super(BVTK_Node_PyvistaCalculator, self).update()
-        vtkobjs = self.get_input_vtkobjs()
-        if self.input_is_invalid(vtkobjs):
-            return
-
-        (data_dicts, pvobjs, vtkobjs) = self.get_data_dicts()
-        self.outputs["output"].data = pvobjs[0].copy()
-    """
 
     def apply_inputs(self, vtkobj):
         print("Apply input called with " + str(vtkobj))
@@ -290,8 +310,12 @@ class BVTK_Node_PyvistaCalculator(ArbitraryInputsHelper, Node, BVTK_Node):
         if self.input_is_invalid(vtkobjs):
             return None
         
-        (data_dicts, pvobjs, vtkobjs) = self.get_data_dicts(vtkobjs)
-        return pvobjs[0]
+        ret_tuples = self.get_data_dicts(vtkobjs)
+        if ret_tuples is not None:
+            (data_dicts, pvobjs, vtkobjs) = ret_tuples
+            return pvobjs[0]
+        else:
+            return None
 
     def get_output(self, socketname):
         '''Execute user defined function. If something goes wrong,
@@ -366,6 +390,142 @@ class BVTK_Node_PyvistaCalculator(ArbitraryInputsHelper, Node, BVTK_Node):
 #    pass
 
 
+class BVTK_Node_Preview(Node, BVTK_Node):
+    '''BVTK Preview Node'''
+    bl_idname = 'BVTK_Node_PreviewType'
+    bl_label  = 'Preview'
+
+    def m_properties(self):
+        return []
+
+    def m_connections(self):
+        return (['input'],[],[],['output'])
+
+    def update_cb(self):
+        in_node, vtkobj = self.get_input_node('input')
+        class_name = vtkobj.__class__.__name__
+        pvobj = None
+
+        #Need to be converted
+        if class_name in vtk_pv_mapping:
+            pvobj = vtk_pv_mapping[class_name](vtkobj)
+
+        #Already converted
+        elif np.any([isinstance(vtkobj, val) for val in vtk_pv_mapping.values()]):
+            pvobj = vtkobj
+
+        #TODO: Segfault on windows
+        if pvobj is not None:
+            pvobj.plot()
+
+        pvobj
+
+    def draw_buttons(self, context, layout):
+        fs="{:.5g}" # Format string
+        in_node, vtkobj = self.get_input_node('input')
+        if not in_node:
+            layout.label(text='Connect a node')
+        elif not vtkobj:
+            layout.label(text='Input has not vtkobj (try updating)')
+        elif vtkobj.__class__.__name__ not in vtk_pv_mapping:
+            layout.label(text='Unsupported vtk type (%s)' % (vtkobj.__class__.__name__))
+        else:
+            vtkobj = resolve_algorithm_output(vtkobj)
+            if not vtkobj:
+                return
+
+            layout.label(text='Type: ' + vtkobj.__class__.__name__)
+
+        layout.separator()
+        row = layout.row()
+        row.separator()
+        row.separator()
+        row.separator()
+        row.separator()
+        row.operator("node.bvtk_node_update", text="preview").node_path = node_path(self)
+
+    def apply_properties(self, vtkobj):
+        pass
+
+    def get_output(self, socketname):
+        return self.get_input_node('input')[1]
+
+class BVTK_Node_BlenderToVTK(Node, BVTK_Node):
+    '''BVTK BlenderToVTK Node'''
+    bl_idname = 'BVTK_Node_BlenderToVTKType'
+    bl_label  = 'BlenderToVTK'
+
+    input_mesh_prop: bpy.props.PointerProperty(type=bpy.types.Object)
+    output_type_items = [ (x,x,x) for x in ['UnstructuredGrid', 'PolyData']]
+    output_type_prop:   bpy.props.EnumProperty   (name='Output Type', default='UnstructuredGrid', items=output_type_items)
+    b_properties: bpy.props.BoolVectorProperty(name="", size=1, get=BVTK_Node.get_b, set=BVTK_Node.set_b)
+
+    def m_properties(self):
+        return ['input_mesh_prop']
+
+    def m_connections(self):
+        return ([],[],[],['output'])
+
+    def update_cb(self):
+        in_node, vtkobj = self.get_input_node('input')
+        class_name = vtkobj.__class__.__name__
+        pvobj = None
+
+        #Need to be converted
+        if class_name in vtk_pv_mapping:
+            pvobj = vtk_pv_mapping[class_name](vtkobj)
+
+        #Already converted
+        elif np.any([isinstance(vtkobj, val) for val in vtk_pv_mapping.values()]):
+            pvobj = vtkobj
+
+        #TODO: Segfault on windows
+        if pvobj is not None:
+            pvobj.plot()
+
+        pvobj
+
+    """
+    def draw_buttons(self, context, layout):
+        fs="{:.5g}" # Format string
+        in_node, vtkobj = self.get_input_node('input')
+        if not in_node:
+            layout.label(text='Connect a node')
+        elif not vtkobj:
+            layout.label(text='Input has not vtkobj (try updating)')
+        elif vtkobj.__class__.__name__ not in vtk_pv_mapping:
+            layout.label(text='Unsupported vtk type (%s)' % (vtkobj.__class__.__name__))
+        else:
+            vtkobj = resolve_algorithm_output(vtkobj)
+            if not vtkobj:
+                return
+
+            layout.label(text='Type: ' + vtkobj.__class__.__name__)
+
+        layout.separator()
+        row = layout.row()
+        row.separator()
+        row.separator()
+        row.separator()
+        row.separator()
+        row.operator("node.bvtk_node_update", text="preview").node_path = node_path(self)
+    """
+
+    def apply_properties(self, vtkobj):
+        pass
+
+    def get_output(self, socketname):
+        return None
+
+"""
+tmp = [(len(mesh.polygons[i].vertices[:]), mesh.polygons[i].vertices[:]) for i in range(len(mesh.polygons))]
+lens, faces = zip(*tmp)
+np.array(lens) == 3 #A
+nr_vertices = len(mesh.vertices)
+points = np.zeros([nr_vertices, 3], dtype=np.float32)
+mesh.vertices.foreach_get('co', points.ravel())
+"""
+
 #def register_nodes():
 l.info("Registering Pyvista nodes")
 # Add classes and menu items
@@ -376,6 +536,10 @@ add_class(BVTK_Node_ArbitraryInputsTest)
 TYPENAMES.append('BVTK_Node_ArbitraryInputsTestType')
 add_class(BVTK_Node_PyvistaCalculator)
 TYPENAMES.append('BVTK_Node_PyvistaCalculatorType')
+add_class(BVTK_Node_Preview)
+TYPENAMES.append('BVTK_Node_PreviewType')
+add_class(BVTK_Node_BlenderToVTK)
+TYPENAMES.append('BVTK_Node_BlenderToVTKType')
 """
 add_class(BVTK_Node_PyvistaFilter)
 TYPENAMES.append('BVTK_Node_PyvistaFilter')

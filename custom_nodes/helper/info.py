@@ -1,5 +1,11 @@
 from ...core import l # Import logging
 from ...core import *
+from ...converters import with_pyvista
+
+if with_pyvista:
+    from ..pynodes.pynodes import vtk_pv_mapping, is_mappable_pyvista_type, is_pyvista_obj, map_vtk_to_pv_obj
+    import numpy as np
+
 
 class BVTK_Node_Info(Node, BVTK_Node):
     '''BVTK Info Node'''
@@ -7,6 +13,7 @@ class BVTK_Node_Info(Node, BVTK_Node):
     bl_label  = 'Info'
 
     arr_string = '{k} [{i}] ({data_type_name}{n_comps}): \'{name}\': {range_text}'
+    active_component_string = 'Active {comp}: {comp_name}'
 
     def m_properties(self):
         return []
@@ -33,7 +40,8 @@ class BVTK_Node_Info(Node, BVTK_Node):
             if not vtkobj:
                 return
 
-            layout.label(text='Type: ' + vtkobj.__class__.__name__)
+            class_name = vtkobj.__class__.__name__
+            layout.label(text='Type: ' + class_name)
 
             layout.label(text='Points: ' + str(vtkobj.GetNumberOfPoints()))
             if hasattr(vtkobj, 'GetNumberOfCells'):
@@ -71,6 +79,28 @@ class BVTK_Node_Info(Node, BVTK_Node):
                     row = layout.row()
                     row.label(text = self.arr_string.format(k=k, i=i, data_type_name=data_type_name, n_comps=n_comps, name=name, range_text=range_text))
 
+            if with_pyvista:
+                pvobj = None
+                if is_mappable_pyvista_type(vtkobj):
+                    pvobj = map_vtk_to_pv_obj(vtkobj)(vtkobj)
+
+                elif is_pyvista_obj(vtkobj)[0]:
+                    pvobj = vtkobj
+                
+                if pvobj is not None:
+                    
+                    for comp in ["scalars", "vectors"]: #, "tensors"]: #Next patch
+                        active_component_name = getattr(pvobj, "active_" + comp + "_name")
+                        if active_component_name is not None:
+                            row = layout.row()
+                            row.label(text = self.active_component_string.format(comp=comp.capitalize(), comp_name=active_component_name))
+                    #row = layout.row()
+                    #row.separator()
+                    #row.separator()
+                    #row.separator()
+                    #row.separator()
+                    #row.operator("node.bvtk_node_update", text="preview").node_path = node_path(self)
+
         layout.separator()
         row = layout.row()
         row.separator()
@@ -78,10 +108,6 @@ class BVTK_Node_Info(Node, BVTK_Node):
         row.separator()
         row.separator()
         row.operator("node.bvtk_node_update", text="update").node_path = node_path(self)
-        row.separator()
-        row.separator()
-        row.separator()
-        row.separator()
 
     def apply_properties(self, vtkobj):
         pass
