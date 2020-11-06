@@ -33,6 +33,16 @@ NodesMap   = {}  # node_id -> node
 VTKCache   = {}  # node_id -> vtkobj
 persistent_storage = {"nodes": {}}
 
+class PersistentStorageUser():
+    def free(self):
+        if self.name in persistent_storage["nodes"]:
+            del persistent_storage["nodes"][self.name]
+
+    def get_persistent_storage(self):
+        if self.name not in persistent_storage["nodes"]:
+            persistent_storage["nodes"][self.name] = {}
+        return persistent_storage["nodes"][self.name]
+
 
 def node_created(node):
     '''Add node to Node Cache. Called from node.init() and from

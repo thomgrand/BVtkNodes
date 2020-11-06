@@ -197,15 +197,12 @@ class BVTK_Node_ColorRamp(Node, BVTK_Node):
     bl_idname = 'BVTK_Node_ColorRampType'
     bl_label  = 'Color Ramp'
 
-    texture_type: bpy.props.EnumProperty(
-        name="texture type",
-        items=[('IMAGE','IMAGE','IMAGE','FILE_IMAGE',1)],
-        default='IMAGE'
-    )
-    my_texture: bpy.props.StringProperty()
-
     def preset_name_from_ind(self, ind):
         return self.cm_preset_items[ind][0]
+
+    def update_colorramp_vals(self, context):
+        print("Update")
+        pass
     
     def update_colorbar_preset(self, context):
         if self.cm_preset == 'custom':
@@ -223,6 +220,14 @@ class BVTK_Node_ColorRamp(Node, BVTK_Node):
         self.update_colorbar_preset(context)
         #self.cm_nr_values_ = value
         #return value
+
+    texture_type: bpy.props.EnumProperty(
+        name="texture type",
+        items=[('IMAGE','IMAGE','IMAGE','FILE_IMAGE',1)],
+        default='IMAGE',
+        update=update_colorramp_vals
+    )
+    my_texture: bpy.props.StringProperty( update=update_colorramp_vals)
 
     cm_preset_items = [ (x,x,x) for x in ['custom'] + sorted(list(colormaps_rgb.keys()))]#['viridis', 'jet', 'coolwarm', 'custom']]
     cm_preset:   bpy.props.EnumProperty   (name='Preset', default='custom', items=cm_preset_items, update=update_colorbar_preset) #, set=update_colorbar_preset)
@@ -272,8 +277,9 @@ class BVTK_Node_ColorRamp(Node, BVTK_Node):
             layout.template_color_ramp(bpy.data.textures[self.my_texture], "color_ramp", expand=False)
         row = layout.row()
         row.prop(self, 'cm_preset')
-        row = layout.row()
-        row.prop(self, 'cm_nr_values')
+        if self.cm_preset != 'custom':
+            row = layout.row()
+            row.prop(self, 'cm_nr_values')
 
     def apply_properties(self, vtkobj):
         pass
@@ -313,6 +319,10 @@ class BVTK_Node_ColorRamp(Node, BVTK_Node):
                 else:
                     e = elements.new(new_el[1])
                     e.color = new_el[0]
+
+    def update(self):
+        print("Update")
+        pass
 
 
 # Add classes and menu items

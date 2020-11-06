@@ -81,11 +81,11 @@ class BVTK_Node_Info(Node, BVTK_Node):
 
             if with_pyvista:
                 pvobj = None
-                if is_mappable_pyvista_type(vtkobj):
-                    pvobj = map_vtk_to_pv_obj(vtkobj)(vtkobj)
-
-                elif is_pyvista_obj(vtkobj)[0]:
+                if is_pyvista_obj(vtkobj):
                     pvobj = vtkobj
+
+                elif is_mappable_pyvista_type(vtkobj):
+                    pvobj = map_vtk_to_pv_obj(vtkobj)(vtkobj)
                 
                 if pvobj is not None:
                     

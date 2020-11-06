@@ -1,0 +1,12 @@
+BVTK Todos:
+-------------
+- ~~VTK Python calculator (multi input)~~
+- Numpy to VTK filter
+- VTK To blender rewrite
+  - Faster with numpy arrays
+  - Vertex colors mappable
+  - Proper colorbar handling
+  - Colormap presets
+- VTKImageData correctly to Blender (2 AND 3 dimensions)
+- Mesh attributes from data 
+- Coding standards!!!

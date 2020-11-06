@@ -124,6 +124,7 @@ else:
     from . import converters
 
     from .custom_nodes import VTKSources, VTKReaders, VTKWriters, VTKFilters, VTKOthers
+    from .tree import node_tree_name
     
 from .core import l # Import logging
 
@@ -171,6 +172,24 @@ def on_file_loaded(scene):
     '''Initialize cache after a blender file open'''
     core.init_cache()
 
+#TODO: Record all f-curves and keyframes to execute and store in a node
+#Possible command:
+#  [kf.co for kf in bpy.data.actions["NodeTreeAction"].fcurves[2].keyframe_points]
+# Remove:
+# tmp =  bpy.data.actions["NodeTreeAction"].fcurves[0] 
+# bpy.data.actions["NodeTreeAction"].fcurves.remove(tmp)
+# Evaluate (automatically handles ints):
+# f_curve.evaluate(scene.frame_current)
+# Interpolation mode:
+# [kf.interpolation for kf in f_curve.keyframe_points]
+# Property:
+# f_curve.data_path
+# Property index:
+# f_curve.array_index
+# Access:
+# eval(f_curve.data_path, {"nodes": node_group.nodes})
+# Change:
+# exec(f_curve.data_path + " = {}".format(f_curve.evaluate(scene.frame_current)), {"nodes": node_group.nodes})
 
 @persistent
 def on_frame_change(scene, depsgraph):
@@ -182,9 +201,17 @@ def on_frame_change(scene, depsgraph):
             # Set frame number directly from Blender timeline.
             # Note: This is a workaround to enable transient data traversal
             # while this issue remains: https://developer.blender.org/T66392
-            if node.bl_idname == 'BVTK_Node_TimeSelectorType':
+            if node.bl_idname == 'BVTK_Node_TimeSelectorType' and node.use_scene_time:
                 node.time_step = scene.frame_current
                 l.debug("TimeSelector time step %d" % node.time_step)
+
+            if node.bl_idname == 'BVTK_Node_GlobalTimeKeeperType':
+                if node.use_scene_time:
+                    node.set_new_time(scene.frame_current)
+                    l.debug("Global Time Keeper time step %d" % node.global_time)
+
+                #node.update_time(scene)
+
 
     # Update mesh objects
     for node_group in bpy.data.node_groups:
@@ -212,10 +239,11 @@ def on_depsgraph_update(scene, depsgraph):
 
     # Update particle objects
     for node_group in bpy.data.node_groups:
-        for node in node_group.nodes:
-            if node.bl_idname == 'BVTK_Node_VTKToBlenderParticlesType':
-                l.debug("VTKToBlenderParticles")
-                node.update_particle_system(depsgraph)
+        if node_group.name == node_tree_name:
+            for node in node_group.nodes:
+                if node.bl_idname == 'BVTK_Node_VTKToBlenderParticlesType':
+                    l.debug("VTKToBlenderParticles")
+                    node.update_particle_system(depsgraph)
 
 
 

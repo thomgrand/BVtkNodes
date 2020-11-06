@@ -121,16 +121,15 @@ def map_vtk_to_pv_obj(vtkobj):
     if not is_mappable_pyvista_type(vtkobj):
         return None
     else:
-        return vtk_pv_mapping[vtkobj.__class__.__name__]
+        return vtk_pv_mapping[vtkobj.GetClassName()]
 
 def is_mappable_pyvista_type(vtkobj):
-    class_name = vtkobj.__class__.__name__
+    class_name = vtkobj.GetClassName()
     return class_name in vtk_pv_mapping
 
 def is_pyvista_obj(vtkobj):
-    vtk_pv_mask, vtk_types, pv_types = zip(*[(isinstance(vtkobj, pv_type), vtk, pv_type) for vtk_type, pv_type in vtk_pv_mapping.items()])
-    vtk_pv_mask = np.array(vtk_pv_mask)
-    return np.any(vtk_pv_mask), vtk_types[np.where(vtk_pv_mask)], pv_types[np.where(vtk_pv_mask)]
+    vtk_pv_mask, vtk_types, pv_types = np.array([(isinstance(vtkobj, pv_type), vtk, pv_type) for vtk_type, pv_type in vtk_pv_mapping.items()]).T
+    return ((vtk_types[np.where(vtk_pv_mask)][0], pv_types[np.where(vtk_pv_mask)][0]) if np.any(vtk_pv_mask) else None)
 
 def create_pyvista_wrapper(vtkobj):
     if isinstance(vtkobj, vtk.vtkAlgorithmOutput):
@@ -217,15 +216,14 @@ class BVTK_Node_PyvistaSource(Node, BVTK_Node):
 class BVTK_Node_PyvistaFilter(Node, BVTK_Node):
     pass
 
-class BVTK_Node_PyvistaCalculator(ArbitraryInputsHelper, Node, BVTK_Node):
+class BVTK_Node_PyvistaCalculator(ArbitraryInputsHelper, PersistentStorageUser, Node, BVTK_Node):
     bl_idname = 'BVTK_Node_PyvistaCalculatorType' # type name
     bl_label  = 'Pyvista Calculator' # label for nice name display
 
     m_LambdaCode:   bpy.props.StringProperty (name='Execution Code', default='')
+    m_ResultName:   bpy.props.StringProperty (name='Result Name', default='result')
 
     e_AttrType_items = [ (x,x,x) for x in ['PointData', 'CellData', 'FieldData']]
-
-    m_ResultName:   bpy.props.StringProperty (name='Result Name', default='result')
     e_AttrType:   bpy.props.EnumProperty   (name='Attribute Type', default='PointData', items=e_AttrType_items)
     #m_InfoMsg: bpy.props.StringProperty (name='Info Message', default='') #, is_readonly=True)
 
@@ -267,6 +265,11 @@ class BVTK_Node_PyvistaCalculator(ArbitraryInputsHelper, Node, BVTK_Node):
         local_dict = {"inputs": self.create_input_dicts(pvobjs)}
         local_dict["numpy"] = np
         local_dict["np"] = np
+        #TODO
+        #local_dict["frame"] = current_frame
+        #local_dict["time"] = current_time
+        #local_dict["min_time"] = min_time
+        #local_dict["max_time"] = max_time
 
         #Only one input: We can unpack the chosen dictionary
         if len(data_dicts) == 1:
@@ -290,7 +293,6 @@ class BVTK_Node_PyvistaCalculator(ArbitraryInputsHelper, Node, BVTK_Node):
             target_dict = vtkobj.field_arrays
             expected_size = None
 
-        #TODO: Is this properly caught?
         assert_bvtk(isinstance(result, np.ndarray) and (expected_size is None or result.shape[0] == expected_size), 
                         "Expected a [%d (, x)] array as a result of the lambda expression. Got %s" % (expected_size, result))
         target_dict[self.m_ResultName] = result #Change the mutable dictionary in-place
@@ -380,14 +382,74 @@ class BVTK_Node_PyvistaCalculator(ArbitraryInputsHelper, Node, BVTK_Node):
     #    print("Setup called")
     #    pass
 
-    def free(self):
-        if self.name in persistent_storage["nodes"]:
-            del persistent_storage["nodes"][self.name]
+class BVTK_Node_SetActiveArrays(PersistentStorageUser, Node, BVTK_Node):
+    '''Convenience node that helps in setting the active scalars, vectors or tensors
+    '''
+    bl_idname = 'BVTK_Node_SetActiveArraysType'
+    bl_label  = 'Set Active Arrays'
 
-#class BVTK_Node_SetActiveArrays(Node, BVTK_Node):
-#    '''Convenience node that helps in setting the active scalars, vectors or tensors
-#    '''
-#    pass
+    e_attr_items = [ (x,x,x) for x in ['Point', 'Cell']]
+    e_attr_type:   bpy.props.EnumProperty   (name='Attribute Type', default='Point', items=e_attr_items)
+
+    e_component_items = [ (x,x,x) for x in ['Scalars', 'Vectors']]
+    e_component_type:   bpy.props.EnumProperty   (name='Attribute Type', default='Scalars', items=e_component_items)
+
+    m_array_name:   bpy.props.StringProperty (name='Array Name', default='')
+    b_deep_copy: bpy.props.BoolProperty(name='Deep Copy', default=True)
+
+    b_properties: bpy.props.BoolVectorProperty(name="", size=4, get=BVTK_Node.get_b, set=BVTK_Node.set_b)
+
+    def m_properties(self):
+        return ['e_attr_type', 'e_component_type', 'm_array_name', 'b_deep_copy']
+
+    def m_connections(self):
+        return (['input'],[],[],['output'])
+
+    def apply_properties(self, vtkobj_ignored):
+        in_node, vtkobj = self.get_input_node('input')
+        vtkobj = resolve_algorithm_output(vtkobj)
+        if is_pyvista_obj(vtkobj):
+            pvobj = vtkobj
+        elif is_mappable_pyvista_type(vtkobj):
+            pvobj = map_vtk_to_pv_obj(vtkobj)(vtkobj)
+        else:
+            raise BVTKException("VTK Object of type %s not supported. Current support is limited to: %s" % (type(vtkobj), vtk_pv_mapping.values()))
+
+        if self.b_deep_copy:
+            pvobj_copied = type(pvobj)()
+            pvobj_copied.deep_copy(pvobj)
+            pvobj = pvobj_copied
+
+        selected_arrays = getattr(pvobj, self.e_attr_type.lower() + "_arrays")
+        assert_bvtk(self.m_array_name in selected_arrays, "Requested array of name %s not found in %s" % (self.m_array_name, selected_arrays.keys()))
+
+        try:
+            active_attr = getattr(pvobj, "set_active_" + self.e_component_type.lower())(self.m_array_name)
+        except Exception as ex:
+            raise BVTKException("Could not set the active " + self.e_component_type, ex)
+        
+        persistent_storage["nodes"][self.name] = pvobj
+
+    def apply_inputs(self, vtkobj):
+        print("Apply input called with " + str(vtkobj))
+        pass
+
+    def get_vtkobj(self):
+        in_node, vtkobj = self.get_input_node('input')
+        if vtkobj == 0 or vtkobj is None:
+            return None
+        else:
+            return vtkobj
+
+    def get_output(self, socketname):
+        if self.name in persistent_storage["nodes"]:
+            return persistent_storage["nodes"][self.name]
+
+        in_node, vtkobj = self.get_input_node('input')
+        if vtkobj == 0 or vtkobj is None:
+            return None
+        else:
+            return vtkobj
 
 
 class BVTK_Node_Preview(Node, BVTK_Node):
@@ -414,11 +476,11 @@ class BVTK_Node_Preview(Node, BVTK_Node):
         elif np.any([isinstance(vtkobj, val) for val in vtk_pv_mapping.values()]):
             pvobj = vtkobj
 
-        #TODO: Segfault on windows
+        #TODO: Segfault
         if pvobj is not None:
             pvobj.plot()
 
-        pvobj
+        #pvobj
 
     def draw_buttons(self, context, layout):
         fs="{:.5g}" # Format string
@@ -456,12 +518,13 @@ class BVTK_Node_BlenderToVTK(Node, BVTK_Node):
     bl_label  = 'BlenderToVTK'
 
     input_mesh_prop: bpy.props.PointerProperty(type=bpy.types.Object)
+    #test_prop: bpy.props.PointerProperty(type=bpy.types.PropertyGroup)
     output_type_items = [ (x,x,x) for x in ['UnstructuredGrid', 'PolyData']]
     output_type_prop:   bpy.props.EnumProperty   (name='Output Type', default='UnstructuredGrid', items=output_type_items)
-    b_properties: bpy.props.BoolVectorProperty(name="", size=1, get=BVTK_Node.get_b, set=BVTK_Node.set_b)
+    b_properties: bpy.props.BoolVectorProperty(name="", size=2, get=BVTK_Node.get_b, set=BVTK_Node.set_b)
 
     def m_properties(self):
-        return ['input_mesh_prop']
+        return ['input_mesh_prop', 'test_prop']
 
     def m_connections(self):
         return ([],[],[],['output'])
@@ -531,11 +594,13 @@ l.info("Registering Pyvista nodes")
 # Add classes and menu items
 TYPENAMES = []
 add_class(BVTK_Node_PyvistaSource)
-TYPENAMES.append('BVTK_Node_PyvistaSource')
+TYPENAMES.append('BVTK_Node_PyvistaSourceType')
 add_class(BVTK_Node_ArbitraryInputsTest)
 TYPENAMES.append('BVTK_Node_ArbitraryInputsTestType')
 add_class(BVTK_Node_PyvistaCalculator)
 TYPENAMES.append('BVTK_Node_PyvistaCalculatorType')
+add_class(BVTK_Node_SetActiveArrays)
+TYPENAMES.append('BVTK_Node_SetActiveArraysType')
 add_class(BVTK_Node_Preview)
 TYPENAMES.append('BVTK_Node_PreviewType')
 add_class(BVTK_Node_BlenderToVTK)
