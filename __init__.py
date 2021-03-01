@@ -206,9 +206,9 @@ def on_frame_change(scene, depsgraph):
                 l.debug("TimeSelector time step %d" % node.time_step)
 
             if node.bl_idname == 'BVTK_Node_GlobalTimeKeeperType':
-                if node.use_scene_time:
-                    node.set_new_time(scene.frame_current)
-                    l.debug("Global Time Keeper time step %d" % node.global_time)
+                #if node.use_scene_time:
+                node.set_new_time(scene.frame_current)
+                l.debug("Global Time Keeper time step %d" % node.global_time)
 
                 #node.update_time(scene)
 

@@ -432,6 +432,8 @@ class BVTK_Node_GlobalTimeKeeper(PersistentStorageUser, AnimationHelper, Node, B
     def update_time(self, context):
         self.update_animated_properties(context.scene)
         self.get_persistent_storage()["animated_properties"] = self.animated_properties
+        self.get_persistent_storage()["interpolation_modes"] = self.interpolation_modes
+        self.get_persistent_storage()["animated_values"] = self.animated_values
 
     def recalculate_steps(self, context):
         pass
@@ -439,8 +441,9 @@ class BVTK_Node_GlobalTimeKeeper(PersistentStorageUser, AnimationHelper, Node, B
     global_time: bpy.props.IntProperty(update=update_time, name="Global Time")
     vtk_speed: bpy.props.FloatProperty(update=recalculate_steps, name="VTK Speed", default=1.0)
     #update_modulo: bpy.props.FloatProperty(update=recalculate_steps)
-    use_scene_time: bpy.props.BoolProperty(name="Use Scene Time", default=True, update=update_time)
+    #use_scene_time: bpy.props.BoolProperty(name="Use Scene Time", default=True, update=update_time)
     invalid: bpy.props.BoolProperty(name="Is Node Valid")
+
 
     #b_properties: bpy.props.BoolVectorProperty(name="", size=4, get=BVTK_Node.get_b, set=BVTK_Node.set_b)
 
@@ -459,10 +462,11 @@ class BVTK_Node_GlobalTimeKeeper(PersistentStorageUser, AnimationHelper, Node, B
             row.label(text="You already have a global time keeper")
             return
 
+        #row = layout.row()
+        #row.prop(self, 'use_scene_time')
         row = layout.row()
-        row.prop(self, 'use_scene_time')
-        row = layout.row()
-        (row.prop(self, 'global_time') if self.use_scene_time else row.label(text="Global Time: {}".format(self.global_time))
+        #(row.prop(self, 'global_time') if self.use_scene_time else row.label(text="Global Time: {}".format(self.global_time)))
+        row.label(text="Global Time: {}".format(self.global_time))
         row = layout.row()
         row.prop(self, 'vtk_speed')
         row = layout.row()
@@ -477,45 +481,19 @@ class BVTK_Node_GlobalTimeKeeper(PersistentStorageUser, AnimationHelper, Node, B
             if animated_properties is not None and len(animated_properties) > 0:
                 row = layout.row()
                 row.label(text="Animated properties: ")
+                row = layout.row()
+                row.label(text="Node")
+                row.label(text="Current Val.")
+                row.label(text="Interpol. Mode")
+                modes = storage["interpolation_modes"]
+                animated_values = storage["animated_values"]
 
-                for prop in animated_properties:
+                for prop, vals, mode in zip(animated_properties, animated_values, modes):
                     row = layout.row()
                     row.label(text=prop)
+                    row.label(text=", ".join({":.2e"}.format(str(val)) for val in vals))
+                    row.label(text=mode)
 
-        """
-        in_node, out_port = self.get_input_node('input')
-        if not in_node:
-            layout.label(text='Connect a node')
-            return
-        if not out_port:
-            layout.label(text='Input has not vtkobj (try updating)')
-            return
-        if not out_port.IsA('vtkAlgorithmOutput'):
-            layout.label(text='Input is not a vtkAlgorithm')
-            return
-
-        prod = out_port.GetProducer()
-        executive = prod.GetExecutive()
-        out_info = prod.GetOutputInformation(out_port.GetIndex())
-        if hasattr(executive, "TIME_STEPS"):
-            time_steps = out_info.Get(executive.TIME_STEPS())
-            if time_steps:
-                row = layout.row()
-                row.prop(self, 'time_step', text="Time Step")
-                row = layout.row()
-                row.prop(self, 'use_scene_time')
-                row = layout.row()
-                size = len(time_steps)
-                row.label(text="Max Steps: "+str(size-1))
-                if -size <= self.time_step < size:
-                    layout.label(text="Time Value: "+str(time_steps[self.time_step]))
-                else:
-                    layout.label(text='Index error', icon='ERROR')
-            else:
-                layout.label(text='No time data on input')
-        else:
-            layout.label(text='Input contains no time steps')
-        """
         row = layout.row()
         row.separator()
         row.separator()

@@ -7,8 +7,13 @@ from ..core import *
 from ..core import l
 import bpy
 
+invalid_frame = int(-1e6)
+invalid_vtk_time = -4.37e6
+
 class AnimationHelper():
 
+    current_frame = invalid_frame
+    vtk_time = invalid_vtk_time
     def setup(self):
         self.current_frame = int(-1e6)
         self.animated_properties = None
@@ -28,9 +33,14 @@ class AnimationHelper():
 
     def update_animated_properties(self, scene):
         current_frame = scene.frame_current
-        if not hasattr(self, 'current_frame') or self.current_frame != current_frame:
-            self.current_frame = current_frame
+        #if not hasattr(self, 'current_frame') or self.current_frame != current_frame:
+        #    self.current_frame = current_frame
+        AnimationHelper.current_frame = current_frame
+        AnimationHelper.vtk_time = current_frame * self.vtk_speed
             
+        self.animated_properties = []
+        self.interpolation_modes = []
+        self.animated_values = {}
         for node_group in bpy.data.node_groups.values():
             node_tree_name = node_group.name
             for key, val in bpy.data.actions.items():
@@ -38,17 +48,22 @@ class AnimationHelper():
                 #Skip unrelated node trees
                 if node_tree_name + "Action" in key:
                     self.f_curves = bpy.data.actions["NodeTreeAction"].fcurves
-                    self.animated_properties = []
-                    self.animated_values = []
+                    
 
                     for f_curve in self.f_curves:
                         new_val = f_curve.evaluate(current_frame)
                         prop_path = f_curve.data_path
                         arr_ind = f_curve.array_index
 
+                        interpolation_modes = [kf.interpolation for kf in f_curve.keyframe_points]
+                        first_mode = interpolation_modes[0]
+                        single_mode = all(x == first_mode for x in interpolation_modes)
+                        self.interpolation_modes.append(first_mode if single_mode else "Mixed")
+
                         if prop_path not in self.animated_properties:
                             self.animated_properties.append(prop_path)
-                            self.animated_values.append(new_val)
+                            old_vals = (self.animated_values[prop_path] if prop_path in self.animated_values else ())
+                            self.animated_values[prop_path] = old_vals + (new_val,)
 
                         try:
                             try:
@@ -63,6 +78,9 @@ class AnimationHelper():
                                                 + ". Error: " + str(err))
                         except Exception as ex:
                             l.error("Could not update property " + prop_path + ". Error: " + str(ex))
+
+                    #This helps in better displaying vectors by concatenating into a list of tuples
+                    self.animated_values = [self.animated_values[prop_path] for prop_path in self.animated_properties]
                     
 
 
