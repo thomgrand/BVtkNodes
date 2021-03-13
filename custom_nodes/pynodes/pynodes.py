@@ -548,7 +548,7 @@ class BVTK_Node_PyvistaCalculator(ArbitraryInputsHelper, PersistentStorageUser, 
         try:
             result = eval(lambda_eval_str, local_dict)()
         except Exception as ex:
-            err_msg = "Execution of the given calculator function failed with: {}".format(ex)
+            err_msg = "Execution of the given calculator function failed with: {}, {}".format(ex.__class__.__name__, ex)
             l.error(err_msg)
             raise BVTKException(err_msg, ex)
 
@@ -664,13 +664,13 @@ class BVTK_Node_SetActiveArrays(PersistentStorageUser, Node, BVTK_Node):
     e_attr_items = [ (x,x,x) for x in ['Point', 'Cell']]
     e_attr_type:   bpy.props.EnumProperty   (name='Attribute Type', default='Point', items=e_attr_items)
 
-    e_component_items = [ (x,x,x) for x in ['Scalars', 'Vectors']]
+    e_component_items = [ (x,x,x) for x in ['Scalars', 'Vectors', 'Tensors']]
     e_component_type:   bpy.props.EnumProperty   (name='Attribute Type', default='Scalars', items=e_component_items)
 
     m_array_name:   bpy.props.StringProperty (name='Array Name', default='')
     b_deep_copy: bpy.props.BoolProperty(name='Deep Copy', default=True)
 
-    b_properties: bpy.props.BoolVectorProperty(name="", size=4, get=BVTK_Node.get_b, set=BVTK_Node.set_b)
+    b_properties: bpy.props.BoolVectorProperty(name="", size=5, get=BVTK_Node.get_b, set=BVTK_Node.set_b)
 
     def m_properties(self):
         return ['e_attr_type', 'e_component_type', 'm_array_name', 'b_deep_copy']

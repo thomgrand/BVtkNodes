@@ -17,8 +17,8 @@ try:
     from scipy.spatial import cKDTree
     from .custom_nodes.pynodes import pynodes
     from .custom_nodes.pynodes.pynodes import map_vtk_to_pv_obj, is_pyvista_obj
-    #from vtk.util.numpy_support import vtk_to_numpy
-    #pynodes.register_nodes()
+
+    from .errors.bvtk_errors import assert_bvtk
     l.info("Pyvista nodes activated")
 
     try:
@@ -232,12 +232,12 @@ def vtkdata_to_blender_pynodes(data, name,
     edges = []
     if create_edges and hasattr(data_pv, "extract_all_edges"):
         edge_data = data_pv.extract_all_edges()
-        assert(np.all(edge_data.lines[0::3] == 2))
+        assert_bvtk(np.all(edge_data.lines[0::3] == 2), "Extraction of edges failed (internal error)")
 
         #Remapping... The ordering of points is changed from the original mesh
         kdtree = cKDTree(data_pv.points)
         dists, orig_inds = kdtree.query(edge_data.points, k=1)
-        assert(np.allclose(dists, 0.))
+        assert_bvtk(np.allclose(dists, 0.), "Extraction of edges failed (internal error)")
         edges = np.stack([orig_inds[edge_data.lines[1::3]], orig_inds[edge_data.lines[2::3]]], axis=-1).tolist()
 
 
@@ -250,10 +250,12 @@ def vtkdata_to_blender_pynodes(data, name,
     mesh.clear_geometry()
     mesh.from_pydata(vertices, edges, faces)
 
+    ####################
     #Vertex colors
+    vertex_col_key = "vertex_color_"
     for key, arr in data_pv.point_arrays.items():
-        if key[:13] == "vertex_color_":
-            col_name = key[13:]
+        if key[:len(vertex_col_key)] == vertex_col_key:
+            col_name = key[len(vertex_col_key):]
 
             colors_w_alpha = np.ones(shape=[nr_points, 4])
             #Scalar will get converted to a grey-valued color
@@ -268,23 +270,54 @@ def vtkdata_to_blender_pynodes(data, name,
 
             mesh.vertex_colors.new(name=col_name)
             color_data = mesh.vertex_colors[col_name].data
+
             #The colors are clipped... the caller is responsible for normalizing them if necessary
+            #Note that this is also a limitation from the internal representation of vertex colors in Blender:
+            #https://blender.stackexchange.com/questions/53109/vertex-color-values-over-one
             colors_w_alpha = np.minimum(1., np.maximum(0., colors_w_alpha))
             colors_final = np.concatenate(colors_w_alpha[faces])
             color_data.foreach_set('color', colors_final.reshape([-1]))
-    #####################
 
-    #Normals
-    if recalc_norms:
-        if hasattr(data_pv, "point_normals"): # and data_pv.point_normals is not None:
-            if (#data_pv.point_normals is None and 
-                hasattr(data_pv, "compute_normals")):
-                data_pv = data_pv.compute_normals()
-            mesh.vertices.foreach_set("normal", data_pv.point_normals.reshape([-1]))
+    ####################
+    #Attributes
+    #"""
+    #Working, but not yet accessible in the shader editor
+    attr_key = "attr_"
+    for key, arr in data_pv.point_arrays.items():
+        if key[:len(attr_key)] == attr_key:
+            attr_name = key[len(attr_key):]
 
-        if (#data_pv.cell_normals is not None and
-            hasattr(data_pv, "cell_normals")):
-            mesh.polygons.foreach_set("normal", data_pv.cell_normals)
+            try:
+                arr_mean_faces = np.mean(arr[faces], axis=1)
+                colors_w_alpha = np.ones(shape=[len(faces), 4])
+
+                #The attribute will either be converted to 
+                if arr.ndim == 1:
+                    mesh.attributes.new(name=attr_name, type="FLOAT", domain="CORNER")
+                    attr_data = mesh.attributes[attr_name]
+                    attr_data.data.foreach_set('value', arr[faces].reshape([-1]))
+
+                    #mesh.attributes.new(name=attr_name, type="FLOAT", domain="POLYGON")
+                    #attr_data = mesh.attributes[attr_name]
+                    #attr_data.data.foreach_set('value', arr_mean_faces)
+
+                elif arr.shape[-1] == 3:
+                    #colors_w_alpha[..., :-1] = arr_mean_faces
+                    #mesh.attributes.new(name=attr_name, type="FLOAT_COLOR", domain="POLYGON")
+                    #attr_data = mesh.attributes[attr_name]
+                    #attr_data.data.foreach_set('color', colors_w_alpha.reshape([-1]))
+
+                    mesh.attributes.new(name=attr_name, type="FLOAT_VECTOR", domain="POLYGON")
+                    attr_data = mesh.attributes[attr_name]
+                    attr_data.data.foreach_set('vector', arr_mean_faces.reshape([-1]))
+
+                else:
+                    l.warning("Array {:s} is not a valid array for an attributes because of its dimensionality of {}".format(key, str(arr.shape)))
+                    continue
+
+            except Exception as ex:
+                l.warning("Attribute " + key + " could not converted with the error " + str(ex))
+    #"""
 
     if smooth:
         smooth_vals = [True] * len(mesh.polygons)
@@ -295,6 +328,23 @@ def vtkdata_to_blender_pynodes(data, name,
 
     bm = bmesh.new()
     bm.from_mesh(mesh)
+
+    ####################
+    #Normals
+    if recalc_norms:
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+        """
+        if hasattr(data_pv, "point_normals"): # and data_pv.point_normals is not None:
+            if (#data_pv.point_normals is None and 
+                hasattr(data_pv, "compute_normals")):
+                data_pv = data_pv.compute_normals()
+            mesh.vertices.foreach_set("normal", data_pv.point_normals.reshape([-1]))
+
+        if (#data_pv.cell_normals is not None and
+            hasattr(data_pv, "cell_normals")):
+            mesh.polygons.foreach_set("normal", data_pv.cell_normals)
+        """
+
     # Set colors and color legend
     unwrap_and_color_the_mesh(ob, data_pv, name, ramp, bm, generate_material)
     bm.to_mesh(mesh)  # store bmesh to mesh
