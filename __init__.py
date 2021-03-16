@@ -241,31 +241,37 @@ def on_frame_change(scene, depsgraph):
                 for conv_nodes in connected_converter_nodes:
                     nodes_2b_updated = nodes_2b_updated.union(set(conv_nodes))
 
-
     for node in nodes_2b_updated:
-        # Update mesh objects
-    #for node_group in bpy.data.node_groups:
-    #    for node in node_group.nodes:
-        if node.bl_idname == 'BVTK_Node_VTKToBlenderType':
-            l.debug("Animation: Updating VTKToBlender")
-            update.no_queue_update(node, node.update_cb)
-        elif node.bl_idname == 'BVTK_Node_VTKToBlenderMeshType':
-            l.debug("Animation: Updating VTKToBlenderMesh")
-            update.no_queue_update(node, node.update_cb)
-        elif node.bl_idname == 'BVTK_Node_VTKToBlenderVolumeType':
-            l.debug("Animation: Updating VTKToBlenderVolume")
-            converters.delete_objects_startswith(node.ob_name)
-            update.no_queue_update(node, node.update_cb)
+        try:
+            # Update mesh objects
+        #for node_group in bpy.data.node_groups:
+        #    for node in node_group.nodes:
+            if node.bl_idname == 'BVTK_Node_VTKToBlenderType':
+                l.debug("Animation: Updating VTKToBlender")
+                update.no_queue_update(node, node.update_cb)
+            elif node.bl_idname == 'BVTK_Node_VTKToBlenderMeshType':
+                l.debug("Animation: Updating VTKToBlenderMesh")
+                update.no_queue_update(node, node.update_cb)
+            elif node.bl_idname == 'BVTK_Node_VTKToBlenderVolumeType':
+                l.debug("Animation: Updating VTKToBlenderVolume")
+                converters.delete_objects_startswith(node.ob_name)
+                update.no_queue_update(node, node.update_cb)
 
-        # Update particle objects
-    #for node_group in bpy.data.node_groups:
-    #    for node in node_group.nodes:
-        elif node.bl_idname == 'BVTK_Node_VTKToBlenderParticlesType':
-            l.debug("VTKToBlenderParticles")
-            update.no_queue_update(node, node.update_cb)
-            node.update_particle_system(depsgraph)
-        else:
-            l.warning("on_frame_change: Converter nodes " + str(node) + " was found during backtracking but was not updated")
+            # Update particle objects
+        #for node_group in bpy.data.node_groups:
+        #    for node in node_group.nodes:
+            elif node.bl_idname == 'BVTK_Node_VTKToBlenderParticlesType':
+                l.debug("VTKToBlenderParticles")
+                update.no_queue_update(node, node.update_cb)
+                node.update_particle_system(depsgraph)
+            else:
+                l.warning("on_frame_change: Converter nodes " + str(node) + " was found during backtracking but was not updated")
+        except Exception as ex:
+            err_str = "Animation: Update of %s failed with ex: %s" % (node, ex)
+            l.error(err_str)
+            #self.report({'ERROR'}, err_str)
+            #raise BVTKException(err_str, ex)
+            #raise ex
 
 
 @persistent

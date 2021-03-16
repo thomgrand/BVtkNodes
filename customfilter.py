@@ -444,7 +444,8 @@ class BVTK_Node_GlobalTimeKeeper(PersistentStorageUser, AnimationHelper, Node, B
     #use_scene_time: bpy.props.BoolProperty(name="Use Scene Time", default=True, update=update_time)
     invalid: bpy.props.BoolProperty(name="Is Node Valid")
 
-
+    #interpolation_items = [(x, x, x) for x in ["BEZIER", "LINEAR"]]
+    #interpolation_type: bpy.props.EnumProperty(name="", items=interpolation_items)
     #b_properties: bpy.props.BoolVectorProperty(name="", size=4, get=BVTK_Node.get_b, set=BVTK_Node.set_b)
 
     #def m_properties(self):
@@ -483,18 +484,24 @@ class BVTK_Node_GlobalTimeKeeper(PersistentStorageUser, AnimationHelper, Node, B
                 row.label(text="Animated properties: ")
                 row = layout.row()
                 row.label(text="Node")
+                row.label(text="Attr.")
                 row.label(text="Keyframes")
-                row.label(text="Keyframe Values")
-                row.label(text="Current Value")
-                #row.label(text="Interpol. Mode")
+                row.label(text="Keyframe Vals")
+                row.label(text="Current Val")
+                row.label(text="Interpol. Mode")
                 modes = storage["interpolation_modes"]
                 animated_values = storage["animated_values"]
- 
-                for prop, vals, mode in zip(animated_properties, animated_values, modes):
+
+                for elem in animated_properties.values():
                     row = layout.row()
-                    row.label(text=prop)
-                    row.label(text=", ".join(["{:.2f}".format(val) for val in vals]))
-                    #row.label(text=mode)
+                    [row.label(text=str(val)) for val in elem]
+                    #self.interpolation_type = elem[-1]
+                    #row.prop(self, 'interpolation_type')
+                #for prop, vals, mode in zip(animated_properties, animated_values, modes):
+                #    row = layout.row()
+                #    row.label(text=prop)
+                #    row.label(text=", ".join(["{:.2f}".format(val) for val in vals]))
+                #    #row.label(text=mode)
 
         row = layout.row()
         row.separator()
