@@ -430,7 +430,7 @@ class BVTK_Node_GlobalTimeKeeper(PersistentStorageUser, AnimationHelper, Node, B
     bl_label = 'Global Time Keeper'
 
     def update_time(self, context):
-        self.update_animated_properties(context.scene)
+        self.get_persistent_storage()["updated_nodes"] = self.update_animated_properties(context.scene)
         self.get_persistent_storage()["animated_properties"] = self.animated_properties
         self.get_persistent_storage()["interpolation_modes"] = self.interpolation_modes
         self.get_persistent_storage()["animated_values"] = self.animated_values
@@ -483,16 +483,18 @@ class BVTK_Node_GlobalTimeKeeper(PersistentStorageUser, AnimationHelper, Node, B
                 row.label(text="Animated properties: ")
                 row = layout.row()
                 row.label(text="Node")
-                row.label(text="Current Val.")
-                row.label(text="Interpol. Mode")
+                row.label(text="Keyframes")
+                row.label(text="Keyframe Values")
+                row.label(text="Current Value")
+                #row.label(text="Interpol. Mode")
                 modes = storage["interpolation_modes"]
                 animated_values = storage["animated_values"]
-
+ 
                 for prop, vals, mode in zip(animated_properties, animated_values, modes):
                     row = layout.row()
                     row.label(text=prop)
-                    row.label(text=", ".join({":.2e"}.format(str(val)) for val in vals))
-                    row.label(text=mode)
+                    row.label(text=", ".join(["{:.2f}".format(val) for val in vals]))
+                    #row.label(text=mode)
 
         row = layout.row()
         row.separator()
@@ -513,6 +515,7 @@ class BVTK_Node_GlobalTimeKeeper(PersistentStorageUser, AnimationHelper, Node, B
     
     def set_new_time(self, frame):
         self.global_time = frame
+        return self.get_persistent_storage()["updated_nodes"]
         #self.update_animated_properties(bpy.context.scene)
 
     def get_output(self, socketname):

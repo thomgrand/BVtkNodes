@@ -6,6 +6,7 @@ is resolved.
 from ..core import *
 from ..core import l
 import bpy
+import numpy as np
 
 invalid_frame = int(-1e6)
 invalid_vtk_time = -4.37e6
@@ -48,12 +49,31 @@ class AnimationHelper():
                 #Skip unrelated node trees
                 if node_tree_name + "Action" in key:
                     self.f_curves = bpy.data.actions["NodeTreeAction"].fcurves
-                    
+                    #updated_prop_paths = {}
+                    updated_nodes = set()
 
                     for f_curve in self.f_curves:
                         new_val = f_curve.evaluate(current_frame)
                         prop_path = f_curve.data_path
+                        delimiter_index = prop_path.rindex(".")
+                        node_name = prop_path[7:delimiter_index-2]
+                        attribute_name = prop_path[delimiter_index+1:]
                         arr_ind = f_curve.array_index
+                        try:
+                            try:
+                                current_val = eval(f_curve.data_path + "[{}]".format(arr_ind), 
+                                        {"nodes": node_group.nodes})
+                            except TypeError as err:
+                                if arr_ind == 0: #May be a scalar
+                                    current_val = eval(f_curve.data_path, {"nodes": node_group.nodes})
+                                else:
+                                    l.error("Could not load property " + prop_path 
+                                                + ". Error: " + str(err))
+                                    continue
+                            
+                        except Exception as ex:
+                            l.error("Could not update property " + prop_path + ". Error: " + str(ex))
+                            continue
 
                         interpolation_modes = [kf.interpolation for kf in f_curve.keyframe_points]
                         first_mode = interpolation_modes[0]
@@ -65,6 +85,11 @@ class AnimationHelper():
                             old_vals = (self.animated_values[prop_path] if prop_path in self.animated_values else ())
                             self.animated_values[prop_path] = old_vals + (new_val,)
 
+                        #No update necessary if the value hasn't changed
+                        if np.isclose(current_val, new_val):
+                            continue
+
+                        #Update the property with the new value
                         try:
                             try:
                                 exec(f_curve.data_path + "[{}] = {}".format(arr_ind, new_val), 
@@ -76,11 +101,20 @@ class AnimationHelper():
                                 else:
                                     l.error("Could not update property " + prop_path 
                                                 + ". Error: " + str(err))
+
+                            updated_node = eval(prop_path[:delimiter_index], {"nodes": node_group.nodes})
+                            updated_nodes = updated_nodes.union(set([updated_node]))
+                            #if prop_path in updated_prop_paths:
+                            #    updated_prop_paths[prop_path] += (new_val,)
+                            #else:
+                            #    updated_prop_paths[prop_path] = (new_val,)
                         except Exception as ex:
                             l.error("Could not update property " + prop_path + ". Error: " + str(ex))
 
                     #This helps in better displaying vectors by concatenating into a list of tuples
                     self.animated_values = [self.animated_values[prop_path] for prop_path in self.animated_properties]
+                    return updated_nodes
+                    
                     
 
 
