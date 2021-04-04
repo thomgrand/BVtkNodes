@@ -3,6 +3,7 @@ from .core import l # Import logging
 from .core import *
 from .cache import BVTKCache
 import bmesh
+import numpy as np
 
 try:
     import pyopenvdb
@@ -10,6 +11,21 @@ try:
 except ImportError:
     l.warning("Import pyopenvdb failed, BVTK To Blender Volume is unavailable.")
     with_pyopenvdb = False
+
+try:
+    l.info("Checking for pyvista...")
+    import pyvista as pv
+    from scipy.spatial import cKDTree
+    from .custom_nodes.pynodes import pynodes
+    from .custom_nodes.pynodes.pynodes import map_vtk_to_pv_obj, is_pyvista_obj
+
+    from .errors.bvtk_errors import assert_bvtk
+    l.info("Pyvista nodes activated")
+    with_pyvista = True
+except ImportError as err:
+    l.warning("Import pyvista failed with:\n\'%s\'\n, Pyvista related nodes will be unavailable." % (err.msg))
+    with_pyvista = False
+
 
 # -----------------------------------------------------------------------------
 # Converters from VTK to Blender
@@ -96,6 +112,234 @@ def unwrap_and_color_the_mesh(ob, data, name, ramp, bm, generate_material):
     elif generate_material:
         create_material(ob, None)
 
+def generate_vertex_colors(ob, numpy_mesh, name, ramp, mesh, generate_material):
+    # Set colors and color legend
+    if ramp and ramp.color_by:
+        assert(name in numpy_mesh.point_data)
+
+        texture = ramp.get_texture()
+        if ramp.texture_type == 'IMAGE':
+            image_width = 1000
+            img = image_from_ramp(texture.color_ramp, texture.name, image_width)
+
+        # Color legend
+        vrange = (ramp.min, ramp.max)
+        if ramp.lut:
+            colors = create_lut_v2(name, vrange, 6, texture, h=ramp.height)
+
+        vcol_lay = mesh.vertex_colors.new()
+        #colors = numpy_mesh.point_data[name]
+        colors_and_alpha = np.concatenate([colors, np.ones_like(colors[..., :1])], axis=-1)
+        vcol_lay.data.foreach_set("color", numpy_mesh.point_data[name])
+
+#TODO: Does this behavior change with VTK >= 9.0?
+def iterate_cell_faces(faces, nr_faces):
+    """Quicker computation of blender-based faces for meshes with many similar
+    cell types. Not that this decreases worst-case runtime performance to
+    O(n^2), but in practice it can be much quicker if e.g. the object is
+    triangulated.
+    Parameters
+    ----------
+    faces : np.ndarray(int)
+        Face list directly from VTK
+    nr_faces : int
+    Returns
+    -------
+    Face list for blender
+    """
+    assert(with_pyvista)
+
+    current_pos = 0
+    all_faces = []
+    while current_pos != faces.size:
+        current_cell_sizes = faces[current_pos]
+        actual_cell_sizes = faces[current_pos::current_cell_sizes+1]
+        wrong_mask = np.where(actual_cell_sizes != current_cell_sizes)[0]
+
+        if wrong_mask.size == 0: #No wrong matches remaining
+            end_pos = faces.size
+        else:
+            end_pos = current_pos + wrong_mask[0] * (current_cell_sizes+1)
+
+        new_faces = np.stack([faces[current_pos+cell_i:end_pos:current_cell_sizes+1] for cell_i in range(1, current_cell_sizes+1)], 
+                                axis=-1)
+        all_faces += new_faces.tolist()
+        current_pos = end_pos
+
+    if len(all_faces) != nr_faces:
+        raise BVTKException("Number of faces and face array inconsistent")
+
+    return all_faces
+
+
+
+def vtkdata_to_blender_pynodes(data, name, 
+                            create_edges=True, create_faces=True,
+                            ramp=None, smooth=False, recalc_norms=False,
+                            generate_material=False,
+                            triangulate=False):
+    '''This function is a helper, called if pynodes are activated. It speeds up the conversion
+    and gives additional functionality for the conversion like vertex colors and attribute
+    conversion.
+    '''
+    if not data:
+        l.error('no data!')
+        return
+
+    if not is_pyvista_obj(data):
+        pv_type = map_vtk_to_pv_obj(data)
+        if pv_type is None:
+            l.warning("Blender to VTK V2 failed. Could not convert data to pyvista object")
+            vtkdata_to_blender(data, name, ramp, smooth, generate_material)
+            return
+        data_pv = pv_type(data)
+    else:
+        data_pv = data
+
+    faces = []
+    if create_faces:    
+        if triangulate:
+            data_pv = data_pv.triangulate()
+
+        if hasattr(data_pv, "faces"):
+            cells = data_pv.faces
+        elif hasattr(data_pv, "extract_surface"):
+            #orig_pv = data_pv
+            data_pv = data_pv.extract_surface()
+            cells = data_pv.faces
+        else:
+            l.error("No faces found on the mesh")
+            return
+
+        faces = iterate_cell_faces(cells, data_pv.n_cells)
+        #cells = data_pv.cells
+        #current_cell_pos = 0
+        #for cell_i in range(data_pv.n_cells):
+        #    cell_length = cells[current_cell_pos]
+        #    faces.append(cells[current_cell_pos+1:current_cell_pos+1+cell_length].tolist())
+        #    current_cell_pos += cell_length + 1
+
+    edges = []
+    if create_edges and hasattr(data_pv, "extract_all_edges"):
+        edge_data = data_pv.extract_all_edges()
+        assert_bvtk(np.all(edge_data.lines[0::3] == 2), "Extraction of edges failed (internal error)")
+
+        #Remapping... The ordering of points is changed from the original mesh
+        kdtree = cKDTree(data_pv.points)
+        dists, orig_inds = kdtree.query(edge_data.points, k=1)
+        assert_bvtk(np.allclose(dists, 0.), "Extraction of edges failed (internal error)")
+        edges = np.stack([orig_inds[edge_data.lines[1::3]], orig_inds[edge_data.lines[2::3]]], axis=-1).tolist()
+
+
+    #Vertices
+    #In case the surface was extracted
+    nr_points = data_pv.n_points
+    vertices = data_pv.points.tolist()
+    mesh, ob = mesh_and_object(name)
+    #ob.data.from_pydata(vertices, edges, faces)
+    mesh.clear_geometry()
+    mesh.from_pydata(vertices, edges, faces)
+
+    ####################
+    #Vertex colors
+    vertex_col_key = "vertex_color_"
+    for key, arr in data_pv.point_arrays.items():
+        if key[:len(vertex_col_key)] == vertex_col_key:
+            col_name = key[len(vertex_col_key):]
+
+            colors_w_alpha = np.ones(shape=[nr_points, 4])
+            #Scalar will get converted to a grey-valued color
+            #TODO: Convert this to the given color map
+            if arr.ndim == 1:
+                colors_w_alpha[..., :-1] = arr[..., np.newaxis]
+            elif arr.shape[-1] == 3:
+                colors_w_alpha[..., :-1] = arr
+            else:
+                l.warning("Array {:s} is not a valid array for vertex colors because of its dimensionality of {}".format(key, str(arr.shape)))
+                continue
+
+            mesh.vertex_colors.new(name=col_name)
+            color_data = mesh.vertex_colors[col_name].data
+
+            #The colors are clipped... the caller is responsible for normalizing them if necessary
+            #Note that this is also a limitation from the internal representation of vertex colors in Blender:
+            #https://blender.stackexchange.com/questions/53109/vertex-color-values-over-one
+            colors_w_alpha = np.minimum(1., np.maximum(0., colors_w_alpha))
+            colors_final = np.concatenate(colors_w_alpha[faces])
+            color_data.foreach_set('color', colors_final.reshape([-1]))
+
+    ####################
+    #Attributes
+    #"""
+    #Working, but not yet accessible in the shader editor
+    attr_key = "attr_"
+    for key, arr in data_pv.point_arrays.items():
+        if key[:len(attr_key)] == attr_key:
+            attr_name = key[len(attr_key):]
+
+            try:
+                arr_mean_faces = np.mean(arr[faces], axis=1)
+                colors_w_alpha = np.ones(shape=[len(faces), 4])
+
+                #The attribute will either be converted to 
+                if arr.ndim == 1:
+                    mesh.attributes.new(name=attr_name, type="FLOAT", domain="CORNER")
+                    attr_data = mesh.attributes[attr_name]
+                    attr_data.data.foreach_set('value', arr[faces].reshape([-1]))
+
+                    #mesh.attributes.new(name=attr_name, type="FLOAT", domain="POLYGON")
+                    #attr_data = mesh.attributes[attr_name]
+                    #attr_data.data.foreach_set('value', arr_mean_faces)
+
+                elif arr.shape[-1] == 3:
+                    #colors_w_alpha[..., :-1] = arr_mean_faces
+                    #mesh.attributes.new(name=attr_name, type="FLOAT_COLOR", domain="POLYGON")
+                    #attr_data = mesh.attributes[attr_name]
+                    #attr_data.data.foreach_set('color', colors_w_alpha.reshape([-1]))
+
+                    mesh.attributes.new(name=attr_name, type="FLOAT_VECTOR", domain="POLYGON")
+                    attr_data = mesh.attributes[attr_name]
+                    attr_data.data.foreach_set('vector', arr_mean_faces.reshape([-1]))
+
+                else:
+                    l.warning("Array {:s} is not a valid array for an attributes because of its dimensionality of {}".format(key, str(arr.shape)))
+                    continue
+
+            except Exception as ex:
+                l.warning("Attribute " + key + " could not converted with the error " + str(ex))
+    #"""
+
+    if smooth:
+        smooth_vals = [True] * len(mesh.polygons)
+        mesh.polygons.foreach_set("use_smooth", smooth_vals)
+        if hasattr(mesh, "faces"):
+            smooth_vals = [True] * len(mesh.faces)
+            mesh.faces.foreach_set("use_smooth", smooth_vals)
+
+    bm = bmesh.new()
+    bm.from_mesh(mesh)
+
+    ####################
+    #Normals
+    if recalc_norms:
+        bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+        """
+        if hasattr(data_pv, "point_normals"): # and data_pv.point_normals is not None:
+            if (#data_pv.point_normals is None and 
+                hasattr(data_pv, "compute_normals")):
+                data_pv = data_pv.compute_normals()
+            mesh.vertices.foreach_set("normal", data_pv.point_normals.reshape([-1]))
+        if (#data_pv.cell_normals is not None and
+            hasattr(data_pv, "cell_normals")):
+            mesh.polygons.foreach_set("normal", data_pv.cell_normals)
+        """
+
+    # Set colors and color legend
+    unwrap_and_color_the_mesh(ob, data_pv, name, ramp, bm, generate_material)
+    bm.to_mesh(mesh)  # store bmesh to mesh
+    l.info('conversion successful, verts = ' + str(nr_points))
+
+
 
 def vtkdata_to_blender(data, name, ramp=None, smooth=False, generate_material=False):
     '''Convert VTK data to Blender mesh object, using optionally
@@ -176,6 +420,10 @@ class BVTK_Node_VTKToBlenderMesh(Node, BVTK_Node):
     recalc_norms: bpy.props.BoolProperty(name='Recalculate Normals', default=False)
     generate_material: bpy.props.BoolProperty(name='Generate Material', default=False)
 
+    if with_pyvista:
+        use_pynodes: bpy.props.BoolProperty(name='Use V2', default=True)
+        triangulate: bpy.props.BoolProperty(name='Triangulate', default=True)
+
     def start_scan(self, context):
         if context:
             if self.auto_update:
@@ -187,7 +435,7 @@ class BVTK_Node_VTKToBlenderMesh(Node, BVTK_Node):
 
     def m_properties(self):
         return ['m_Name', 'create_all_verts', 'create_edges', 'create_faces',
-                'smooth', 'recalc_norms', 'generate_material']
+                'smooth', 'recalc_norms', 'generate_material']  + (["use_pynodes", "triangulate"] if with_pyvista else [])
 
     def m_connections(self):
         return ( ['input'],[],[],[] )
@@ -201,6 +449,11 @@ class BVTK_Node_VTKToBlenderMesh(Node, BVTK_Node):
         layout.prop(self, 'smooth', text='Smooth')
         layout.prop(self, 'recalc_norms')
         layout.prop(self, 'generate_material')
+
+        if with_pyvista:
+            layout.prop(self, 'use_pynodes')
+            layout.prop(self, 'triangulate')
+
         layout.separator()
         layout.operator("node.bvtk_node_update", text="update").node_path = node_path(self)
 
@@ -214,13 +467,24 @@ class BVTK_Node_VTKToBlenderMesh(Node, BVTK_Node):
             input_node, vtkobj = input_node.get_input_node('input')
         if vtkobj:
             vtkobj = resolve_algorithm_output(vtkobj)
-            vtkdata_to_blender_mesh (vtkobj, self.m_Name, smooth=self.smooth,
+            
+            if with_pyvista and self.use_pynodes:
+                vtkdata_to_blender_pynodes(vtkobj, self.m_Name, smooth=self.smooth,
+                                     create_edges=self.create_edges,
+                                     create_faces=self.create_faces,
+                                     recalc_norms=self.recalc_norms,
+                                     generate_material=self.generate_material,
+                                     ramp=ramp,
+                                     triangulate=self.triangulate)
+            else:
+                vtkdata_to_blender_mesh (vtkobj, self.m_Name, smooth=self.smooth,
                                      create_all_verts=self.create_all_verts,
                                      create_edges=self.create_edges,
                                      create_faces=self.create_faces,
                                      recalc_norms=self.recalc_norms,
                                      generate_material=self.generate_material,
                                      ramp=ramp)
+                                     
             update_3d_view()
 
     def apply_properties(self, vtkobj):

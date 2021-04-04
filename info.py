@@ -1,5 +1,10 @@
 from .core import l # Import logging
 from .core import *
+from .converters import with_pyvista
+
+if with_pyvista:
+    from .custom_nodes.pynodes.pynodes import vtk_pv_mapping, is_mappable_pyvista_type, is_pyvista_obj, map_vtk_to_pv_obj
+    import numpy as np
 
 class BVTK_Node_Info(Node, BVTK_Node):
     '''BVTK Info Node'''
@@ -7,6 +12,7 @@ class BVTK_Node_Info(Node, BVTK_Node):
     bl_label  = 'Info'
 
     arr_string = '{k} [{i}] ({data_type_name}{n_comps}): \'{name}\': {range_text}'
+    active_component_string = 'Active {comp}: {comp_name}'
 
     def m_properties(self):
         return []
@@ -62,7 +68,6 @@ class BVTK_Node_Info(Node, BVTK_Node):
                         
                         if name is None or data_type_name is None or n_comps is None:
                             l.warning("Invalid array encountered...")
-                            #continue
 
                         range_text = ''
                         for n in range(n_comps):
@@ -71,6 +76,23 @@ class BVTK_Node_Info(Node, BVTK_Node):
                         row = layout.row()
                         row.label(text = self.arr_string.format(k=k, i=i, data_type_name=data_type_name, 
                             n_comps=n_comps, name=name, range_text=range_text))
+
+        
+            if with_pyvista:
+                pvobj = None
+                if is_pyvista_obj(vtkobj):
+                    pvobj = vtkobj
+
+                elif is_mappable_pyvista_type(vtkobj):
+                    pvobj = map_vtk_to_pv_obj(vtkobj)(vtkobj)
+
+                if pvobj is not None:
+                    #Show the active arrays (scalars, vectors, tensors)
+                    for comp in ["scalars", "vectors", "tensors"]:
+                        active_component_name = getattr(pvobj, "active_" + comp + "_name")
+                        if active_component_name is not None:
+                            row = layout.row()
+                            row.label(text = self.active_component_string.format(comp=comp.capitalize(), comp_name=active_component_name))
 
         layout.separator()
         row = layout.row()

@@ -5,7 +5,7 @@ is resolved.
 '''
 from .core import *
 from .core import l
-from .core import assert_bvtk
+from .errors.bvtk_errors import assert_bvtk
 import bpy
 import numpy as np
 

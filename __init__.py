@@ -125,12 +125,8 @@ else:
     from . import update
     from . import converters
 
-    from .custom_nodes import VTKSources
-    from .custom_nodes import VTKReaders
-    from .custom_nodes import VTKWriters
-    from .custom_nodes import VTKFilters
-    
-    from .custom_nodes import VTKOthers
+    from .custom_nodes import VTKSources, VTKReaders, VTKWriters, VTKFilters, VTKOthers
+    from .tree import node_tree_name #TODO: Necessary?
 
 from .core import l # Import logging
 
