@@ -806,76 +806,114 @@ class BVTK_Node_Preview(PersistentStorageUser, Node, BVTK_Node):
     def apply_properties(self, vtkobj):
         pass
 
+    #def get_vtkobj(self):
+    #    return self.get_output("output")
+
     def get_output(self, socketname):
         return self.get_input_node('input')[0]
+
+
+edge_count_vtk_type_map = {2: vtk.VTK_LINE, 3: vtk.VTK_TRIANGLE, 4: vtk.VTK_QUAD, 8: vtk.VTK_HEXAHEDRON}
+
+def mean_cell_to_point(arr, cell_map, nr_points):
+    counts = np.zeros(shape=[nr_points], dtype=arr.dtype)
+    mean_arr = counts.copy()
+    np.add.at(counts, cell_map, np.ones_like(arr))
+    np.add.at(mean_arr, cell_map, arr)
+    return mean_arr / counts
 
 class BVTK_Node_BlenderToVTK(Node, BVTK_Node):
     '''BVTK BlenderToVTK Node'''
     bl_idname = 'BVTK_Node_BlenderToVTKType'
     bl_label  = 'BlenderToVTK'
 
-    input_mesh_prop: bpy.props.PointerProperty(type=bpy.types.Object)
+    input_mesh_prop: bpy.props.PointerProperty(type=bpy.types.Mesh)
     #test_prop: bpy.props.PointerProperty(type=bpy.types.PropertyGroup)
     output_type_items = [ (x,x,x) for x in ['UnstructuredGrid', 'PolyData']]
     output_type_prop:   bpy.props.EnumProperty   (name='Output Type', default='UnstructuredGrid', items=output_type_items)
-    b_properties: bpy.props.BoolVectorProperty(name="", size=2, get=BVTK_Node.get_b, set=BVTK_Node.set_b)
+    triangulate: bpy.props.BoolProperty(name='Triangulate', default=True)
+    save_normals: bpy.props.BoolProperty(name='Save Normals', default=True)
+    save_vertex_cols: bpy.props.BoolProperty(name='Save Vertex Colors', default=True)
+    b_properties: bpy.props.BoolVectorProperty(name="", size=6, get=BVTK_Node.get_b, set=BVTK_Node.set_b)
 
     def m_properties(self):
-        return ['input_mesh_prop', 'output_type_prop']
+        return ['input_mesh_prop', 'output_type_prop', 'triangulate', 'save_normals', 'save_vertex_cols']
 
     def m_connections(self):
         return ([],[],[],['output'])
 
-    def update_cb(self):
-        in_node, vtkobj = self.get_input_node('input')
-        class_name = vtkobj.__class__.__name__
-        pvobj = None
-
-        #Need to be converted
-        if class_name in vtk_pv_mapping:
-            pvobj = vtk_pv_mapping[class_name](vtkobj)
-
-        #Already converted
-        elif np.any([isinstance(vtkobj, val) for val in vtk_pv_mapping.values()]):
-            pvobj = vtkobj
-
-        #TODO: Segfault on windows
-        #if pvobj is not None:
-        #    pvobj.plot()
-
-        pvobj
-
-    """
-    def draw_buttons(self, context, layout):
-        fs="{:.5g}" # Format string
-        in_node, vtkobj = self.get_input_node('input')
-        if not in_node:
-            layout.label(text='Connect a node')
-        elif not vtkobj:
-            layout.label(text='Input has not vtkobj (try updating)')
-        elif vtkobj.__class__.__name__ not in vtk_pv_mapping:
-            layout.label(text='Unsupported vtk type (%s)' % (vtkobj.__class__.__name__))
-        else:
-            vtkobj = resolve_algorithm_output(vtkobj)
-            if not vtkobj:
-                return
-
-            layout.label(text='Type: ' + vtkobj.__class__.__name__)
-
-        layout.separator()
-        row = layout.row()
-        row.separator()
-        row.separator()
-        row.separator()
-        row.separator()
-        row.operator("node.bvtk_node_update", text="preview").node_path = node_path(self)
-    """
-
-    def apply_properties(self, vtkobj):
+    #No inputs to process
+    def apply_inputs(self, vtkobj_ignored):
         pass
+
+    def apply_properties(self, vtkobj_ignored):
+        #No mesh selected
+        if self.input_mesh_prop is None:
+            return
+
+        mesh = self.input_mesh_prop
+
+        #Read vertices
+        nr_points = len(mesh.vertices)
+        points = np.zeros(shape=[nr_points * 3])
+        mesh.vertices.foreach_get("co", points)
+        points = points.reshape([-1, 3])
+
+
+        nr_faces = len(mesh.polygons)
+        faces_size = mesh.polygons[-1].loop_indices[-1] + 1
+        faces = np.zeros(shape=[faces_size], dtype=np.int32)
+        face_sizes = np.zeros(shape=[nr_faces], dtype=np.int32)
+        mesh.polygons.foreach_get("vertices", faces)
+        mesh.polygons.foreach_get("loop_total", face_sizes)
+        face_offsets = np.concatenate([[0], np.cumsum(face_sizes)[:-1]])
+        vtk_faces = np.insert(faces, face_offsets, face_sizes)
+
+        if self.output_type_prop == "UnstructuredGrid":
+            cell_types = np.array([(edge_count_vtk_type_map[size] if size in edge_count_vtk_type_map else vtk.VTK_POLYGON) for size in face_sizes])
+
+            vtk_mesh = pv.UnstructuredGrid(vtk_faces, cell_types, points)
+        elif self.output_type_prop == "PolyData":
+            vtk_mesh = pv.PolyData(points, vtk_faces)
+
+        if self.save_vertex_cols:
+            for vcol_lay in mesh.vertex_colors:
+                colors_and_alpha = np.zeros(shape=[faces_size * 4], dtype=np.float32)
+                vcol_lay.data.foreach_get("color", colors_and_alpha)
+                colors_and_alpha = colors_and_alpha.reshape([-1, 4])
+                vtk_mesh.point_arrays["vertex_color_" + vcol_lay.name] = np.stack([mean_cell_to_point(colors_and_alpha[..., i], faces, nr_points) for i in range(3)], axis=-1) #Alpha channel is ignored
+
+        #TODO: Point or cell normals?
+        if self.save_normals:
+            point_normals = np.zeros(shape=[nr_points * 3], dtype=np.float32)
+            mesh.vertices.foreach_get("normal", point_normals)
+            point_normals = point_normals.reshape([-1, 3])
+            vtk_mesh.point_arrays["normals"] = point_normals
+
+        if self.triangulate:
+            vtk_mesh = vtk_mesh.triangulate()
+
+        persistent_storage["nodes"][self.name] = vtk_mesh
 
     def get_output(self, socketname):
         return None
+
+    def get_vtkobj(self):
+        return self.get_output("output")
+
+    def get_output(self, socketname):
+        if self.input_mesh_prop is None:
+            return None
+
+        elif self.name in persistent_storage["nodes"]:
+            return persistent_storage["nodes"][self.name]
+        elif self.output_type_prop == "UnstructuredGrid":
+            return pv.UnstructuredGrid()
+        elif self.output_type_prop == "PolyData":
+            return pv.PolyData()
+        else:
+            assert_bvtk(False, "Unexpected output type for " + self.name)
+
 
 """
 tmp = [(len(mesh.polygons[i].vertices[:]), mesh.polygons[i].vertices[:]) for i in range(len(mesh.polygons))]
