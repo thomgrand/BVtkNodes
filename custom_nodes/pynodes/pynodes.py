@@ -827,17 +827,23 @@ class BVTK_Node_BlenderToVTK(Node, BVTK_Node):
     bl_idname = 'BVTK_Node_BlenderToVTKType'
     bl_label  = 'BlenderToVTK'
 
-    input_mesh_prop: bpy.props.PointerProperty(type=bpy.types.Mesh)
+    input_obj_prop: bpy.props.PointerProperty(type=bpy.types.Object)
     #test_prop: bpy.props.PointerProperty(type=bpy.types.PropertyGroup)
     output_type_items = [ (x,x,x) for x in ['UnstructuredGrid', 'PolyData']]
     output_type_prop:   bpy.props.EnumProperty   (name='Output Type', default='UnstructuredGrid', items=output_type_items)
     #triangulate: bpy.props.BoolProperty(name='Triangulate', default=True)
+    apply_transforms: bpy.props.BoolProperty(name='Apply Transformations', 
+                            description='Apply the objects transformations (Translation, Rotation and Scale) before conversion', 
+                            default=True)
+    apply_modifiers: bpy.props.BoolProperty(name='Apply Modifiers', 
+                            description='Apply the objects modifiers (if activated in Preview) before conversion.', 
+                            default=True)
     copy_normals: bpy.props.BoolProperty(name='Copy Normals', default=True)
     copy_vertex_cols: bpy.props.BoolProperty(name='Copy Vertex Colors', default=True)
-    b_properties: bpy.props.BoolVectorProperty(name="", size=4, get=BVTK_Node.get_b, set=BVTK_Node.set_b)
+    b_properties: bpy.props.BoolVectorProperty(name="", size=6, get=BVTK_Node.get_b, set=BVTK_Node.set_b)
 
     def m_properties(self):
-        return ['input_mesh_prop', 'output_type_prop', 'copy_normals', 'copy_vertex_cols']
+        return ['input_obj_prop', 'output_type_prop', 'apply_transforms', 'apply_modifiers', 'copy_normals', 'copy_vertex_cols']
 
     def m_connections(self):
         return ([],[],[],['output'])
@@ -848,16 +854,33 @@ class BVTK_Node_BlenderToVTK(Node, BVTK_Node):
 
     def apply_properties(self, vtkobj_ignored):
         #No mesh selected
-        if self.input_mesh_prop is None:
+        if self.input_obj_prop is None:
             return
 
-        mesh = self.input_mesh_prop
+        obj = self.input_obj_prop
+        assert_bvtk(type(obj.data) == bpy.types.Mesh, "Could not convert Object " + obj.name + " to VTK. No underlying mesh found")
+
+        #https://blender.stackexchange.com/questions/146559/how-do-i-get-a-mesh-data-block-with-modifiers-and-shape-keys-applied-in-blender
+        if self.apply_modifiers:
+            dg = bpy.context.evaluated_depsgraph_get()
+            obj = obj.evaluated_get(dg)
+        
+        mesh = obj.data
+            
 
         #Read vertices
         nr_points = len(mesh.vertices)
         points = np.zeros(shape=[nr_points * 3])
         mesh.vertices.foreach_get("co", points)
         points = points.reshape([-1, 3])
+
+        if self.apply_transforms:
+            points_homogeneous = np.ones(shape=[points.shape[0], 4])
+            points_homogeneous[..., :-1] = points
+            transform_mat = obj.matrix_world
+            transform_mat = np.array([transform_mat.row[i][:] for i in range(4)])
+            points_transformed = np.einsum('xy,...y->...x', transform_mat, points_homogeneous)
+            points = points_transformed[..., :-1] / points_transformed[..., -1:]
 
 
         nr_faces = len(mesh.polygons)
@@ -902,7 +925,7 @@ class BVTK_Node_BlenderToVTK(Node, BVTK_Node):
         return self.get_output("output")
 
     def get_output(self, socketname):
-        if self.input_mesh_prop is None:
+        if self.input_obj_prop is None:
             return None
 
         elif self.name in persistent_storage["nodes"]:
