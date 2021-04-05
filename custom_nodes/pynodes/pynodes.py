@@ -831,13 +831,13 @@ class BVTK_Node_BlenderToVTK(Node, BVTK_Node):
     #test_prop: bpy.props.PointerProperty(type=bpy.types.PropertyGroup)
     output_type_items = [ (x,x,x) for x in ['UnstructuredGrid', 'PolyData']]
     output_type_prop:   bpy.props.EnumProperty   (name='Output Type', default='UnstructuredGrid', items=output_type_items)
-    triangulate: bpy.props.BoolProperty(name='Triangulate', default=True)
-    save_normals: bpy.props.BoolProperty(name='Save Normals', default=True)
-    save_vertex_cols: bpy.props.BoolProperty(name='Save Vertex Colors', default=True)
-    b_properties: bpy.props.BoolVectorProperty(name="", size=6, get=BVTK_Node.get_b, set=BVTK_Node.set_b)
+    #triangulate: bpy.props.BoolProperty(name='Triangulate', default=True)
+    copy_normals: bpy.props.BoolProperty(name='Copy Normals', default=True)
+    copy_vertex_cols: bpy.props.BoolProperty(name='Copy Vertex Colors', default=True)
+    b_properties: bpy.props.BoolVectorProperty(name="", size=4, get=BVTK_Node.get_b, set=BVTK_Node.set_b)
 
     def m_properties(self):
-        return ['input_mesh_prop', 'output_type_prop', 'triangulate', 'save_normals', 'save_vertex_cols']
+        return ['input_mesh_prop', 'output_type_prop', 'copy_normals', 'copy_vertex_cols']
 
     def m_connections(self):
         return ([],[],[],['output'])
@@ -876,7 +876,7 @@ class BVTK_Node_BlenderToVTK(Node, BVTK_Node):
         elif self.output_type_prop == "PolyData":
             vtk_mesh = pv.PolyData(points, vtk_faces)
 
-        if self.save_vertex_cols:
+        if self.copy_vertex_cols:
             for vcol_lay in mesh.vertex_colors:
                 colors_and_alpha = np.zeros(shape=[faces_size * 4], dtype=np.float32)
                 vcol_lay.data.foreach_get("color", colors_and_alpha)
@@ -884,14 +884,14 @@ class BVTK_Node_BlenderToVTK(Node, BVTK_Node):
                 vtk_mesh.point_arrays["vertex_color_" + vcol_lay.name] = np.stack([mean_cell_to_point(colors_and_alpha[..., i], faces, nr_points) for i in range(3)], axis=-1) #Alpha channel is ignored
 
         #TODO: Point or cell normals?
-        if self.save_normals:
+        if self.copy_normals:
             point_normals = np.zeros(shape=[nr_points * 3], dtype=np.float32)
             mesh.vertices.foreach_get("normal", point_normals)
             point_normals = point_normals.reshape([-1, 3])
             vtk_mesh.point_arrays["normals"] = point_normals
 
-        if self.triangulate:
-            vtk_mesh = vtk_mesh.triangulate()
+        #if self.triangulate:
+        #    vtk_mesh = vtk_mesh.triangulate()
 
         persistent_storage["nodes"][self.name] = vtk_mesh
 

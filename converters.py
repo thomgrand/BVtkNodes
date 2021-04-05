@@ -1,5 +1,6 @@
 from .update import *
 from .core import l # Import logging
+from .core import update_id
 from .core import *
 from .cache import BVTKCache
 import bmesh
@@ -227,7 +228,7 @@ def vtkdata_to_blender_pynodes(data, name,
         #Remapping... The ordering of points is changed from the original mesh
         kdtree = cKDTree(data_pv.points)
         dists, orig_inds = kdtree.query(edge_data.points, k=1)
-        assert_bvtk(np.allclose(dists, 0.), "Extraction of edges failed (internal error)")
+        assert_bvtk(np.allclose(dists, 0., atol=1e-5), "Extraction of edges failed (internal error)")
         edges = np.stack([orig_inds[edge_data.lines[1::3]], orig_inds[edge_data.lines[2::3]]], axis=-1).tolist()
 
 
@@ -1937,7 +1938,6 @@ def imgdata_to_blender(data, name):
     #mat.use_shadeless = True
     #tex.image = img
 
-
 class BVTK_OT_NodeUpdate(bpy.types.Operator):
     '''Node Update Operator'''
     bl_idname = "node.bvtk_node_update"
@@ -1947,12 +1947,14 @@ class BVTK_OT_NodeUpdate(bpy.types.Operator):
     use_queue: bpy.props.BoolProperty(default = True)
 
     def execute(self, context):
+        global update_id
+        update_id += 1
         BVTKCache.check_cache()
         node = eval(self.node_path)
         if node:
             if self.use_queue:
                 l.debug('Updating with queue from node: '+ node.name)
-                Update(node, node.update_cb)
+                Update(node, node.update_cb, update_id)
             else:
                 l.debug('Updating without queue from node: '+ node.name)
                 no_queue_update(node, node.update_cb)
