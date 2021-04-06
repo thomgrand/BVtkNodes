@@ -253,8 +253,8 @@ def vtkdata_to_blender_pynodes(data, name,
             #TODO: Convert this to the given color map
             if arr.ndim == 1:
                 colors_w_alpha[..., :-1] = arr[..., np.newaxis]
-            elif arr.shape[-1] == 3:
-                colors_w_alpha[..., :-1] = arr
+            elif arr.shape[-1] <= 4:
+                colors_w_alpha[..., :arr.shape[-1]] = arr
             else:
                 l.warning("Array {:s} is not a valid array for vertex colors because of its dimensionality of {}".format(key, str(arr.shape)))
                 continue

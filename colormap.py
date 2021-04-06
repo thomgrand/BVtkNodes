@@ -7,6 +7,11 @@ from .cache import BVTKCache
 import json
 import os
 import numpy as np
+from .converters import with_pyvista
+from .errors.bvtk_errors import assert_bvtk
+
+if with_pyvista:
+    from .custom_nodes.pynodes.pynodes import map_vtk_to_pv_obj, is_pyvista_obj
 
 current_dir = os.path.dirname(__file__)
 
@@ -208,6 +213,99 @@ class BVTK_Node_ColorMapper(Node, BVTK_Node):
                 layout.label(text='Input has no associated data (try updating)')
 
 
+class BVTK_Node_VertexColorMapper(Node, BVTK_Node):
+    '''BVTK Vertex Color Mapper Node'''
+    bl_idname = 'BVTK_Node_VertexColorMapperType'
+    bl_label  = 'Vertex Color Mapper'
+
+    # Properties of ColorMapper
+    """
+    texture_type: bpy.props.EnumProperty(
+        name="texture type",
+        items=[('IMAGE','IMAGE','IMAGE','FILE_IMAGE',1)],
+        default='IMAGE'
+    )
+    """
+
+    def draw_buttons(self, context, layout):
+        layout.prop(self, 'array_name')
+        layout.prop(self, 'auto_range')
+
+        if self.auto_range:
+            layout.label(text="min_val: %.02f" % (self.min_val))
+            layout.label(text="max_val: %.02f" % (self.max_val))
+        else:
+            layout.prop(self, 'min_val')
+            layout.prop(self, 'max_val')
+
+        layout.prop(self, 'create_scalar_bar')
+        
+
+    array_name: bpy.props.StringProperty(default="", name='Array Name', description="Name of the array that is used")
+    max_val: bpy.props.FloatProperty(default=1)
+    min_val: bpy.props.FloatProperty(default=0)
+    auto_range: bpy.props.BoolProperty(name="Automatic Range", default=True)
+    create_scalar_bar: bpy.props.BoolProperty(name="Create Scalar Bar", default=False)
+    b_properties: bpy.props.BoolVectorProperty(name="", size=5, get=BVTK_Node.get_b, set=BVTK_Node.set_b)
+    #deep_copy: bpy.props.BoolProperty(name='Deep Copy', default=True)
+
+    def m_properties(self):
+        return ['array_name', 'auto_range', 'min_val', 'max_val', 'create_scalar_bar'] #, 'deep_copy']
+
+    def m_connections(self):
+        return (['input'],[],[],['output'])
+
+    def setup(self):
+        self.inputs.new('BVTK_NodeSocketType', 'lookuptable')
+
+    def get_output(self, socketname):
+        vtkobj = self.get_input_node('input')[1]
+        return vtkobj
+    
+    def get_vtkobj(self):
+        return self.get_output('output')
+
+    def apply_properties(self, vtkobj):
+        vtkobj = self.get_input_node('input')[1]
+        if not is_pyvista_obj(vtkobj):
+            pvobj = map_vtk_to_pv_obj(vtkobj)(vtkobj)
+        else:
+            pvobj = vtkobj
+        assert_bvtk(pvobj is not None, "Found no valid data input")
+
+        #Check for the color ramp
+        color_ramp_node = self.get_input_node('lookuptable')[0]
+        assert_bvtk(color_ramp_node is not None, "Found no valid color ramp input")
+
+        texture = color_ramp_node.get_texture()
+        assert_bvtk(texture is not None, "Found no valid color ramp input")
+        color_ramp = texture.color_ramp
+
+        if self.array_name not in pvobj.point_arrays.keys():
+            if self.array_name not in pvobj.cell_arrays.keys():
+                assert_bvtk(self.array_name in pvobj.point_arrays.keys(), "Array " + self.array_name + " is a cell array, but a point array is needed. Consider using CellToPointData.")
+            else:
+                assert_bvtk(False, "Array " + self.array_name + " not found")
+
+        arr = np.squeeze(pvobj.point_arrays[self.array_name])
+        assert_bvtk(arr.ndim == 1, "Array " + self.array_name + " is not of scalar type")
+
+        if self.auto_range:
+            self.max_val = np.max(arr)
+            self.min_val = np.min(arr)
+            
+        vals_range = self.max_val - self.min_val
+        vals_renormalized = (arr - self.min_val) / vals_range
+
+        mapped_colors = np.array([color_ramp.evaluate(val) for val in vals_renormalized], dtype=arr.dtype)
+
+        #if self.deep_copy:
+        #    pvobj = pvobj.deep_copy()
+        pvobj.point_arrays[self.array_name] = mapped_colors
+
+    def apply_inputs(self, vtkobj):
+        pass
+        
 
 class BVTK_Node_ColorRamp(Node, BVTK_Node):
     '''BVTK Color Ramp Node'''
@@ -291,11 +389,6 @@ class BVTK_Node_ColorRamp(Node, BVTK_Node):
         row = layout.row()
         row.prop(self, 'cm_nr_values')
 
-
-
-    def apply_properties(self, vtkobj):
-        pass
-
     def get_output(self, socketname):
         lut = vtk.vtkLookupTable()
         lut.Build()
@@ -339,6 +432,10 @@ add_class(BVTK_Node_ColorMapper)
 TYPENAMES.append('BVTK_Node_ColorMapperType')
 add_class(BVTK_Node_ColorRamp)
 TYPENAMES.append('BVTK_Node_ColorRampType')
+
+if with_pyvista:
+    add_class(BVTK_Node_VertexColorMapper)
+    TYPENAMES.append('BVTK_Node_VertexColorMapperType')
 
 menu_items = [NodeItem(x) for x in TYPENAMES]
 CATEGORIES.append(BVTK_NodeCategory("Color", "Color", items=menu_items))
