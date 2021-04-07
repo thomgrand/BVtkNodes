@@ -182,7 +182,7 @@ class VTKAppendFilter(Node, BVTK_Node):
                 if in_obj.IsA('vtkAlgorithmOutput'):
                     vtkobj.RemoveInputConnection(0, in_obj)
                 else:
-                    vtkobj.RemoveInputData(0, in_obj)
+                    vtkobj.RemoveInputData(in_obj)
 
     def get_output(self, socketname):
         vtkobj = self.get_vtkobj()

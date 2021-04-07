@@ -562,7 +562,7 @@ class BVTK_Node_UpdateAll(Node, BVTK_Node):
                             no_queue_update(node, lambda x: x, False)
                             node.get_vtkobj().Write()
                     except Exception as ex:
-                        l.warning("Update of node " + node + " failed with " + str(ex))
+                        l.warning("Update of node " + node.name + " failed with " + str(ex))
 
 
 
