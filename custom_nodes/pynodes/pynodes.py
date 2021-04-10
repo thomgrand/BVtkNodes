@@ -583,7 +583,7 @@ class BVTK_Node_PyvistaCalculator(ArbitraryInputsHelper, PersistentStorageUser, 
             target_dict = vtkobj.field_arrays
             expected_size = None
 
-        assert_bvtk(isinstance(result, np.ndarray) and (expected_size is None or result.shape[0] == expected_size), 
+        assert_bvtk(isinstance(result, np.ndarray) and result.ndim > 0 and (expected_size is None or result.shape[0] == expected_size), 
                         "Expected a [%d (, x)] array as a result of the lambda expression. Got %s" % (expected_size, result))
         target_dict[self.m_ResultName] = result #Change the mutable dictionary in-place
         persistent_storage["nodes"][self.name] = vtkobj

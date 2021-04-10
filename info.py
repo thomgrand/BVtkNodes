@@ -77,7 +77,8 @@ class BVTK_Node_Info(Node, BVTK_Node):
                         row.label(text = self.arr_string.format(k=k, i=i, data_type_name=data_type_name, 
                             n_comps=n_comps, name=name, range_text=range_text))
 
-        
+            #TODO: Takes a lot of computations since there is no caching for this part
+            #      Either use a cache or an optional flag for this
             if with_pyvista:
                 pvobj = None
                 if is_pyvista_obj(vtkobj):
