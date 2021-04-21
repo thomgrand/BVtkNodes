@@ -102,55 +102,6 @@ class ArbitraryInputsHelper():
         elif new_connection and current_inputs < self.input_limit:
             self.inputs.new('BVTK_NodeSocketType', self.input_format_str.format(current_inputs))
 
-
-class CustomPyvistaFilter(VTKPythonAlgorithmBase):
-    def __init__(self, n_input_ports, output_type, filter_code, time_steps=None):
-        VTKPythonAlgorithmBase.__init__(self,
-            nInputPorts=n_input_ports,
-            nOutputPorts=1, outputType=output_type,
-            additional_dict=None)
-        self.time_steps = time_steps
-        self.filter_code = filter_code
-        if additional_dict is None:
-            additional_dict = {}
-        
-        self.additional_dict = additional_dict
-        self.output = vtk_pv_mapping[output_type]()
-
-
-    def RequestInformation(self, request, in_info, out_info):
-        if self.time_steps is not None:
-            algorithm = self
-            #info = out_info.GetInformationObject(0)
-            executive = algorithm.GetExecutive()
-            out_info = executive.GetOutputInformation(0)
-            out_info.Remove(executive.TIME_STEPS())
-            for timestep in self.time_steps:
-                out_info.Append(executive.TIME_STEPS(), timestep)
-            out_info.Remove(executive.TIME_RANGE())
-            out_info.Append(executive.TIME_RANGE(), self.time_steps[0])
-            out_info.Append(executive.TIME_RANGE(), self.time_steps[-1])
-
-        return 1
-
-    def RequestData(self, request, in_info, out_info):
-        def GetUpdateTimestep(algorithm):
-            """Returns the requested time value, or None if not present"""
-            executive = algorithm.GetExecutive()
-            #out_info = executive.GetOutputInformation(0)
-            if not out_info.Has(executive.UPDATE_TIME_STEP()):
-                return None
-            return out_info.Get(executive.UPDATE_TIME_STEP())
-
-        try:
-            exec(self.filter_code, locals={**locals(), **self.additional_dict})
-        except Exception as ex:
-            raise BVTKException("Execution of the custom pyvista filter failed", ex)
-
-        self.output.GetInformation().Set(self.output.DATA_TIME_STEP(), GetUpdateTimestep(self))
-        return 1
-
-
 class BVTK_Node_ArbitraryInputsTest(ArbitraryInputsHelper, Node, BVTK_Node):
     '''Test Node to see the functionality of ArbitraryInputsHelper
     '''
@@ -251,112 +202,7 @@ def convert_vtk_to_pv(vtkobj):
     return pvobj
 
 
-class BVTK_Node_PyvistaSource(Node, BVTK_Node):
-    '''Create meshes using the numpy and pyvista interfaces. The output type
-    can be specified for easier organization.
-    '''
-    bl_idname = 'BVTK_Node_PyvistaSourceType' # type name
-    bl_label  = 'Pyvista Source' # label for nice name display
-    """
-    m_Name: bpy.props.StringProperty(name='Name', default='mesh')
-    create_all_verts: bpy.props.BoolProperty(name='Create All Verts', default=False)
-    create_edges: bpy.props.BoolProperty(name='Create Edges', default=True)
-    create_faces: bpy.props.BoolProperty(name='Create Faces', default=True)
-    smooth: bpy.props.BoolProperty(name='Smooth', default=False)
-    recalc_norms: bpy.props.BoolProperty(name='Recalculate Normals', default=False)
-    generate_material: bpy.props.BoolProperty(name='Generate Material', default=False)
-
-    def start_scan(self, context):
-        if context:
-            if self.auto_update:
-                bpy.ops.node.bvtk_auto_update_scan(
-                    node_name=self.name,
-                    tree_name=context.space_data.node_tree.name)
-
-    auto_update: bpy.props.BoolProperty(default=False, update=start_scan)
-
-    def m_properties(self):
-        return ['m_Name', 'create_all_verts', 'create_edges', 'create_faces',
-                'smooth', 'recalc_norms', 'generate_material']
-
-    def m_connections(self):
-        return ( ['input'],[],[],[] )
-
-    def draw_buttons(self, context, layout):
-        layout.prop(self, 'm_Name')
-        layout.prop(self, 'create_all_verts')
-        layout.prop(self, 'create_edges')
-        layout.prop(self, 'create_faces')
-        layout.prop(self, 'auto_update', text='Auto update')
-        layout.prop(self, 'smooth', text='Smooth')
-        layout.prop(self, 'recalc_norms')
-        layout.prop(self, 'generate_material')
-        layout.separator()
-        layout.operator("node.bvtk_node_update", text="update").node_path = node_path(self)
-
-    def update_cb(self):
-        '''Update node color bar and update Blender object'''
-        input_node, vtkobj = self.get_input_node('input')
-        ramp = None
-        if input_node and input_node.bl_idname == 'BVTK_Node_ColorMapperType':
-            ramp = input_node
-            ramp.update()    # setting auto range
-            input_node, vtkobj = input_node.get_input_node('input')
-        if vtkobj:
-            vtkobj = resolve_algorithm_output(vtkobj)
-            vtkdata_to_blender_mesh (vtkobj, self.m_Name, smooth=self.smooth,
-                                     create_all_verts=self.create_all_verts,
-                                     create_edges=self.create_edges,
-                                     create_faces=self.create_faces,
-                                     recalc_norms=self.recalc_norms,
-                                     generate_material=self.generate_material,
-                                     ramp=ramp)
-            update_3d_view()
-
-    def apply_properties(self, vtkobj):
-        pass
-    """
-    pass
-
-class BVTK_Node_PyvistaFilter(ArbitraryInputsHelper, PersistentStorageUser, Node, BVTK_Node):
-    bl_idname = 'BVTK_Node_PyvistaFilterType' # type name
-    bl_label  = 'Pyvista Filter/Source' # label for nice name display
-
-    def texts(self, context):
-        '''Generate list of text objects to choose'''
-        t = []
-        i = 0
-        for text in bpy.data.texts:
-            t.append((text.name, text.name, text.name, 'TEXT', i))
-            i += 1
-        if not t:
-            t.append(('No texts found', 'No texts found', 'No texts found', 'TEXT', i))
-        return t
-
-    filter_code: bpy.props.EnumProperty(items=texts, name='Filter Code')
-    output_type_items = [(x, x, x) for x in vtk_pv_mapping.keys()]
-    output_type: bpy.props.EnumProperty(name='Output Type', default=list(vtk_pv_mapping.keys())[0], 
-                                    items=output_type_items)
-    add_time: bpy.props.BoolProperty(name='Add Time', default=False)
-    time_code: bpy.props.EnumProperty(items=texts, name='Time Code')
-
-    #current_output = None
-    def m_properties(self):
-        return ['filter_code', 'output_type', 'add_time', 'time_code']
-
-    b_properties: bpy.props.BoolVectorProperty(name="", size=4, get=BVTK_Node.get_b, set=BVTK_Node.set_b)
-    #info_msg = ""
-
-    def draw_buttons(self, context, layout):
-        row = layout.row(align=True)
-        row.prop(self, 'text')
-        op = row.operator('node.bvtk_new_text', icon='ZOOM_IN', text='')
-        op.name = 'customfilter.py'
-        op.body = self.__doc__.replace("    ","")
-        if len(self.functions()):
-            layout.prop(self, 'func')
-        else:
-            layout.label(text='No functions found in specified text')
+class PyvistaComputeHelper(ArbitraryInputsHelper, PersistentStorageUser):
 
     def create_input_dicts(self, pvobjs):
         input_dicts = []
@@ -372,94 +218,9 @@ class BVTK_Node_PyvistaFilter(ArbitraryInputsHelper, PersistentStorageUser, Node
 
         return input_dicts
 
-    def apply_properties(self, vtkobj):
-        print("Apply properties called with " + str(vtkobj))
-        assert_bvtk(type(vtkobj) in vtk_pv_mapping.values(), "Expected a pyvista type. This is an internal error... try updating")
-
-        (data_dicts, pvobjs, vtkobjs) = self.get_data_dicts()
-        vtkobj.deep_copy(pvobjs[0]) #Take shape and arguments from the input
-
-        lambda_eval_str = "lambda: " + self.m_LambdaCode
-
-        local_dict = {"inputs": self.create_input_dicts(pvobjs)}
-        local_dict["numpy"] = np
-        local_dict["np"] = np
-
-        if AnimationHelper.current_frame != invalid_frame:
-            local_dict["frame"] = AnimationHelper.current_frame
-
-        #if AnimationHelper.vtk_time != invalid_vtk_time:
-        #    local_dict["time"] = AnimationHelper.vtk_time
-        #local_dict["min_time"] = min_time
-        #local_dict["max_time"] = max_time
-
-        #Only one input: We can unpack the chosen dictionary
-        if len(data_dicts) == 1:
-            local_dict = {**local_dict, **{k: v for k, v in data_dicts[0].items()}}
-
-        try:
-            result = eval(lambda_eval_str, locals=local_dict)()
-        except Exception as ex:
-            err_msg = "Execution of the given calculator function failed with: {}".format(ex)
-            l.error(err_msg)
-            raise BVTKException(err_msg, ex)
-
-
-        if self.e_AttrType == 'PointData':
-            target_dict = vtkobj.point_arrays
-            expected_size = vtkobj.n_points
-        elif self.e_AttrType == 'CellData':
-            target_dict = vtkobj.cell_arrays
-            expected_size = vtkobj.n_cells
-        else:
-            target_dict = vtkobj.field_arrays
-            expected_size = None
-
-        assert_bvtk(isinstance(result, np.ndarray) and (expected_size is None or result.shape[0] == expected_size), 
-                        "Expected a [%d (, x)] array as a result of the lambda expression. Got %s" % (expected_size, result))
-        target_dict[self.m_ResultName] = result #Change the mutable dictionary in-place
-        persistent_storage["nodes"][self.name] = vtkobj
-
-        pass
-
     def apply_inputs(self, vtkobj):
         print("Apply input called with " + str(vtkobj))
         pass
-
-    def input_is_invalid(self, vtkobjs):
-        return len(vtkobjs) == 0 or vtkobjs[0] is None or vtkobjs[0] == 0
-
-    def get_vtkobj(self):
-        vtkobjs = self.get_input_vtkobjs()
-        if self.input_is_invalid(vtkobjs):
-            return None
-        
-        ret_tuples = self.get_data_dicts(vtkobjs)
-        if ret_tuples is not None:
-            (data_dicts, pvobjs, vtkobjs) = ret_tuples
-            return pvobjs[0]
-        else:
-            return None
-
-    def get_output(self, socketname):
-        '''Execute user defined function. If something goes wrong,
-        print the error and return the input object.
-        '''
-        #if len(self.m_LambdaCode) == 0:
-        #    return None
-        if self.name in persistent_storage["nodes"]:
-            return persistent_storage["nodes"][self.name]
-
-        vtkobjs = self.get_input_vtkobjs()
-        if self.input_is_invalid(vtkobjs):
-            return None
-
-        #Output is equivalent to the type of the first input
-        vtkobj = vtkobjs[0]
-        pvobj = convert_vtk_to_pv(vtkobj)
-        #(data_dicts, pvobjs, vtkobjs) = self.get_data_dicts(vtkobjs)
-        return pvobj
-        #return vtkobjs[0]
 
     def get_input_vtkobjs(self):
         nr_inputs = self.current_active_inputs
@@ -475,35 +236,113 @@ class BVTK_Node_PyvistaFilter(ArbitraryInputsHelper, PersistentStorageUser, Node
     def get_data_dicts(self, vtkobjs=None):
         nr_inputs = self.current_active_inputs
 
-        data_dicts = []
+        data_dicts = {"point_arrays": [], "cell_arrays": [], "field_arrays": []}
         pvobjs = []
 
         if vtkobjs is None:
             vtkobjs = self.get_input_vtkobjs()
 
         for input_i in range(nr_inputs):
-            #in_node, vtkobj = self.get_input_node(self.inputs[input_i].name)
-            #vtkobjs.append(resolve_algorithm_output(vtkobj))
-
             #At least one of the objects is not resolvable currently
             if vtkobjs[input_i] is None or vtkobjs[input_i] == 0:
                 return None
 
             pvobj = create_pyvista_wrapper(vtkobjs[input_i])
 
-            if self.e_AttrType == 'PointData':
-                data_dict = pvobj.point_arrays
-            elif self.e_AttrType == 'CellData':
-                data_dict = pvobj.cell_arrays
-            else:
-                data_dict = pvobj.field_arrays
-
-            data_dicts.append(data_dict)
+            data_dicts["point_arrays"].append(pvobj.point_arrays)
+            data_dicts["cell_arrays"].append(pvobj.cell_arrays)
+            data_dicts["field_arrays"].append(pvobj.field_arrays)
             pvobjs.append(pvobj)
 
         return (data_dicts, pvobjs, vtkobjs)
 
-class BVTK_Node_PyvistaCalculator(ArbitraryInputsHelper, PersistentStorageUser, Node, BVTK_Node):
+    #def setup(self):
+    #    print("Setup called")
+    #    pass
+
+class BVTK_Node_PyvistaSource(PyvistaComputeHelper, Node, BVTK_Node):
+    '''Create meshes using the numpy and pyvista interfaces. Can take multiple inputs similar to PyvistaCalculator
+    '''
+    bl_idname = 'BVTK_Node_PyvistaSourceType' # type name
+    bl_label  = 'Pyvista Source' # label for nice name display
+
+    def texts(self, context):
+        '''Generate list of text objects to choose'''
+        t = []
+        i = 0
+        for text in bpy.data.texts:
+            t.append((text.name, text.name, text.name, 'TEXT', i))
+            i += 1
+        if not t:
+            t.append(('No texts found', 'No texts found', 'No texts found', 'TEXT', i))
+        return t
+
+    script: bpy.props.EnumProperty(items=texts, name='Script')    
+    #output_type_items = [ (x,x,x) for x in ['UnstructuredGrid', 'PolyData']]
+    #output_type_prop:   bpy.props.EnumProperty   (name='Output Type', default='UnstructuredGrid', items=output_type_items)
+
+    def m_properties(self):
+        return ['script'] #, 'output_type_prop']
+
+    b_properties: bpy.props.BoolVectorProperty(name="", size=2, get=BVTK_Node.get_b, set=BVTK_Node.set_b)
+
+    def apply_properties(self, vtkobj):
+        print("Apply properties called with " + str(vtkobj))
+        assert_bvtk(self.script in bpy.data.texts, "Please provide a script for Pyvista Source")
+
+        script_str = bpy.data.texts[self.script].as_string()
+        script_str_indented = "\n".join(['\t' + line for line in script_str.splitlines()])
+        (data_dicts, pvobjs, vtkobjs) = self.get_data_dicts()
+        func_header_str = "def executePyvistaSource(inputs, frame):\n"
+        func_str = func_header_str + script_str_indented
+
+        #local_dict = {"inputs": self.create_input_dicts(pvobjs)}
+        inputs = self.create_input_dicts(pvobjs)
+        #local_dict["numpy"] = np
+        #local_dict["np"] = np
+        frame = AnimationHelper.current_frame
+
+        #if AnimationHelper.current_frame != invalid_frame:
+        #    local_dict["frame"] = AnimationHelper.current_frame
+
+        #if AnimationHelper.vtk_time != invalid_vtk_time:
+        #    local_dict["time"] = AnimationHelper.vtk_time
+        #local_dict["min_time"] = min_time
+        #local_dict["max_time"] = max_time
+
+        #Only one input: We can unpack the chosen dictionary
+        #if len(data_dicts) == 1:
+        #    local_dict = {**local_dict, **{k: v for k, v in data_dicts[0].items()}}
+
+        try:
+            #Execute the function to create it in a temporary scope
+            scope = {**globals(), **locals()} #Make local and global variables visible to the function (e.g. numpy and pyvista)
+            exec(func_str, scope)
+            result = scope['executePyvistaSource'](inputs, frame)
+        except Exception as ex:
+            err_msg = "Execution of the given Pyvista Source function failed with: {}, {}".format(ex.__class__.__name__, ex)
+            l.error(err_msg)
+            raise BVTKException(err_msg, ex)
+
+        #TODO: Better possibility to check if the return value is a vtk object? Not all vtk objects may have GetPoints
+        assert_bvtk(result is not None and hasattr(result, 'GetPoints'), "The script is required to return a valid VTK or Pyvista object")
+        persistent_storage["nodes"][self.name] = result
+
+        pass
+
+    def get_vtkobj(self):
+        if self.name in persistent_storage["nodes"]:
+            return persistent_storage["nodes"][self.name]
+        else:
+            return pv.PolyData() #Return an empty. This is necessary for BVTK to actually call apply properties
+
+    def get_output(self, socketname):
+        '''Execute user defined function. If something goes wrong,
+        print the error and return the input object.
+        '''
+        return self.get_vtkobj()
+
+class BVTK_Node_PyvistaCalculator(PyvistaComputeHelper, Node, BVTK_Node):
     bl_idname = 'BVTK_Node_PyvistaCalculatorType' # type name
     bl_label  = 'Pyvista Calculator' # label for nice name display
 
@@ -526,25 +365,20 @@ class BVTK_Node_PyvistaCalculator(ArbitraryInputsHelper, PersistentStorageUser, 
     #    row = layout.row()
     #    row.label(text = self.info_msg)
 
-    def create_input_dicts(self, pvobjs):
-        input_dicts = []
-        for pvobj, input_i in zip(pvobjs, range(self.current_active_inputs)):
-            single_input_dict = pvobj
-            for data_arr_name in ["point", "cell", "field"]:
-                array_name = data_arr_name + "_arrays"
-                key_name = data_arr_name.capitalize() + "Data"
-                data_dict = {k: v for k, v in getattr(pvobj, array_name).items()}
-                setattr(single_input_dict, key_name, data_dict)
-
-            input_dicts.append(single_input_dict)
-
-        return input_dicts
-
     def apply_properties(self, vtkobj):
         print("Apply properties called with " + str(vtkobj))
         assert_bvtk(type(vtkobj) in vtk_pv_mapping.values(), "Expected a pyvista type. This is an internal error... try updating")
 
         (data_dicts, pvobjs, vtkobjs) = self.get_data_dicts()
+
+        #Choose the correct data dictionary
+        if self.e_AttrType == 'PointData':
+            data_dicts = data_dicts['point_arrays']
+        elif self.e_AttrType == 'CellData':
+            data_dicts = data_dicts['cell_arrays']
+        else:
+            data_dicts = data_dicts['field_arrays']
+
         vtkobj.deep_copy(pvobjs[0]) #Take shape and arguments from the input
 
         lambda_eval_str = "lambda: " + self.m_LambdaCode
@@ -590,10 +424,6 @@ class BVTK_Node_PyvistaCalculator(ArbitraryInputsHelper, PersistentStorageUser, 
 
         pass
 
-    def apply_inputs(self, vtkobj):
-        print("Apply input called with " + str(vtkobj))
-        pass
-
     def input_is_invalid(self, vtkobjs):
         return len(vtkobjs) == 0 or vtkobjs[0] is None or vtkobjs[0] == 0
 
@@ -629,51 +459,6 @@ class BVTK_Node_PyvistaCalculator(ArbitraryInputsHelper, PersistentStorageUser, 
         return pvobj
         #return vtkobjs[0]
 
-    def get_input_vtkobjs(self):
-        nr_inputs = self.current_active_inputs
-        vtkobjs = []
-
-        for input_i in range(nr_inputs):
-            in_node, vtkobj = self.get_input_node(self.inputs[input_i].name)
-            if vtkobj:
-                vtkobjs.append(resolve_algorithm_output(vtkobj))
-
-        return vtkobjs
-
-    def get_data_dicts(self, vtkobjs=None):
-        nr_inputs = self.current_active_inputs
-
-        data_dicts = []
-        pvobjs = []
-
-        if vtkobjs is None:
-            vtkobjs = self.get_input_vtkobjs()
-
-        for input_i in range(nr_inputs):
-            #in_node, vtkobj = self.get_input_node(self.inputs[input_i].name)
-            #vtkobjs.append(resolve_algorithm_output(vtkobj))
-
-            #At least one of the objects is not resolvable currently
-            if vtkobjs[input_i] is None or vtkobjs[input_i] == 0:
-                return None
-
-            pvobj = create_pyvista_wrapper(vtkobjs[input_i])
-
-            if self.e_AttrType == 'PointData':
-                data_dict = pvobj.point_arrays
-            elif self.e_AttrType == 'CellData':
-                data_dict = pvobj.cell_arrays
-            else:
-                data_dict = pvobj.field_arrays
-
-            data_dicts.append(data_dict)
-            pvobjs.append(pvobj)
-
-        return (data_dicts, pvobjs, vtkobjs)
-
-    #def setup(self):
-    #    print("Setup called")
-    #    pass
 
 class BVTK_Node_SetActiveArrays(PersistentStorageUser, Node, BVTK_Node):
     '''Convenience node that helps in setting the active scalars, vectors or tensors
